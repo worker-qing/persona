@@ -35,6 +35,17 @@ Pitfalls, odd behavior, and the trade-offs made at the time (formerly in `CLAUDE
   Merging files only rescues aliases: a function's `--settings` isn't readable (#1411). Persona additions therefore use composable flags (`--plugin-dir`, `--mcp-config`),
   not `--settings`: hooks are a plugin (`docs/integrations/claude-integration.md` ("Hooks")); only older Claude Code versions still merge. Having users recognize Persona's `--settings` by its directory name
   inside their launcher function and yield to it is also wrong: changing the data directory from `~/.persona` to `~/.persona` breaks that detection.
+- Windows inline `--mcp-config` JSON can be corrupted before Claude starts (#3402). A native argv recorder launched directly by Go preserved doubled backslashes;
+  Git Bash's builtin `printf '%s\n' "$@"` already saw single backslashes instead. The loss is in `bash.exe`/MSYS parsing the incoming native command line, not Bash
+  forwarding arguments to a Windows child. The installed Claude was a native executable, not an npm shim. With the same `-p` stream-json flags and empty stdin,
+  inline JSON exited 1 with an invalid MCP config; an absolute forward-slash file path exited 0 with the JSON bytes unchanged.
+  Keep Windows CLI JSON in a unique 0600 file per process in `privateCacheDir` (Windows privacy relies on the user cache directory's ACL), retain it until exit,
+  and remove it on preparation/start failure or exit. This includes guests and SDK-to-CLI fallback; macOS/Linux keep inline JSON, and the SDK's stdin transport
+  needs no file. Do not fix this by rewriting JSON backslashes or logging its contents, which may contain extension credentials.
+- Fixing MCP argv does not prove a Windows assistant can receive its first prompt (#3577). The generated shell-form hook can still fail during
+  `UserPromptSubmit` with an unmatched quote around Windows paths. Use Claude Code's native hook `command` plus `args` on Windows, with the existing
+  `--persona-home` flag instead of a shell environment assignment. Keep every event, matcher and timeout unchanged: never disable hooks to pass a smoke test.
+  A real Windows `SessionStart` native-argv probe returned its marker successfully; full acceptance must also deliver a user prompt and observe a reply.
 - Plugin (`--plugin-dir`) hooks behave like those in `--settings` (measured 2026-11-04 on 2.1.318: SessionStart, UserPromptSubmit, Stop fire; PreToolUse `deny` and PermissionRequest `allow`
   work, in both interactive and `-p` modes), and load alongside the launcher's other `--plugin-dir` entries. Disabling hooks (`disableAllHooks`) still needs
   `--settings`: `--bare` also skips hooks, but accepts only `ANTHROPIC_API_KEY` / `apiKeyHelper`; launchers using login or `ANTHROPIC_AUTH_TOKEN` fail.
@@ -56,7 +67,7 @@ Pitfalls, odd behavior, and the trade-offs made at the time (formerly in `CLAUDE
 - When a screen card is withdrawn because the Agent is no longer blocked, also mark it ended (cancelled) in the database, or history stays pending until hub restarts.
 - Screen dialog recognition must first anchor the dialog's starting row (`screen.dialogTop`: the final separator below the conversation, or the row after a selection panel's `▔` edge), then find numbers below it. Searching the whole screen mistakes the Agent's "1. … 2. …" answer for options—
   a notice dismissible with Enter becomes a question, `dismiss_notice` refuses to dismiss it, and the phone's screen card lists answer text as buttons (#2872). This anchor, `DialogHead`, was already used; both readers now share it.
-- AskUserQuestion: a PreToolUse hook returning `permissionDecision: allow` + `updatedInput.answers` can answer on the user's behalf (tested on 2.1.310).
+- AskUserQuestion: a PermissionRequest hook returning `decision.behavior: allow` + `updatedInput.answers` answers on the user's behalf (real pty on 2.1.319). Persona's PreToolUse lets the terminal dialog open and PermissionRequest waits for the phone; PostToolUse removes `answers` to find the call, then completes every waiter of its exact `tool_use_id` (including one that arrived before PermissionRequest). Don't complete by question text or an empty-id wildcard: a late receipt would cancel the next identical question. Keep the PreToolUse pairing by hook attempt: a resume must reuse its assignment, not consume a newer pending id, and overlapping first / resumed requests need the same binding. After a Node replacement, recover only an unambiguous recent transcript tool_use / tool_result; several possible calls hand that ambiguous generation to the terminal and withdraw its restored cards until each PostToolUse arrives, rather than guess or wait for an unmatchable Post. Standby replay must restore Pre / Permission / Post even when stale event reports are filtered, retained for the hook + reconnect lifetime, not the two-minute `hook.decided` dedup window. Don't route receipts through `decisions.decide`: after a phone answer they would be saved for and wrongly suppress that next question (#2382).
 - ExitPlanMode: uses PermissionRequest, not PreToolUse. `allow` must carry `updatedInput` + `updatedPermissions:[{type:setMode,...}]`
   to work; plain `{behavior:allow}` still shows the TUI dialog. `deny` + `message` delivers feedback to the model as tool_result.
 - After approving a plan in `herdr`, the `PermissionRequest` hook may not exit promptly, and `interaction.cancel` may not reach hub (2026-11-01: the transcript already had a successful `ExitPlanMode` tool_result, session working, phone still needs_you). On sessions / revs changes, hub reads bounded transcript pages for pending plans and ends them using the matching tool_use_id's tool_result. For old hooks without an id, accept only a unique ExitPlanMode call within 30 seconds before creation, with a result no earlier than card creation. Ambiguous matches, offline nodes, "working" alone, or model text never clear it. A 30-second timer covers lost events; per-card rate limiting and single-flight avoid duplicate disk reads.
@@ -111,6 +122,9 @@ Pitfalls, odd behavior, and the trade-offs made at the time (formerly in `CLAUDE
   is silently dropped (`max` too; settings accepts only low…xhigh). The picker has no auto position. `/effort auto` clears this model's default in settings;
   phone auto handling must differ by path (`docs/apple/ios.md` ("Effort and permission modes")). Testing `/effort …` on a dev machine also changes real settings.json; don't use your own configuration.
 - **Settings defaults and session effort need different option lists** (#5946): Claude Code 2.1.318 / Agent SDK 0.3.318 accept only `low`, `medium`, `high`, and `xhigh` in settings.json. Keep `max` in session controls, reject it in settings writes, and report an existing stored `max` as ignored with the model default in effect. Never reuse `proto.EffortLevels` for the settings whitelist. Web settings override node descriptions with their own translations, so a server warning also needs a localized web warning.
+- **An explicit `--permission-mode default` is not "unset"** (#3026): it overrides `permissions.defaultMode` in Claude Code's settings.json, so
+  filling an unset mode with `default` (#2194) silently put every Agent the assistant started into Ask every step for someone whose Claude Code
+  starts in Auto. Resolve "unset" to the mode that would really run (the computer's `permissions.defaultMode`), or pass no flag and show it as unset.
 - ultracode is a second axis (#3427): in `2.1.203–2.1.283` it was a level to the right of max and locked effort; since `2.1.284`, it is independent `/effort ultracode on|off`,
   writes no default, and is off after resume. Persona supports only the latter, does not add ultracode to `EffortLevels`, send `--effort ultracode`, or add `--settings` for it.
   For unknown versions, confirm from result wording; command success does not mean enabled. If `enableWorkflows` is unset, the account plan determines the default; do not fabricate a fixed on / off default.
@@ -709,3 +723,18 @@ either one.
   presses nothing. Saying "update Claude Code" sent the user after a fix that didn't exist.
 - To check that a key really arrives, run a control: a plain Enter on the empty prompt left the queue as it was, while `ctrl+enter`
   (herdr's key name, or the CSI u bytes `ESC [13;5u`) sent it. Confirm in the transcript (`queue-operation remove`), not only on screen.
+
+## Antigravity planner message completion can be progress narration (#3389)
+
+A text-only `PLANNER_RESPONSE` with `status: DONE` can precede more reasoning and tools. It closes that message, not the
+conversation turn. Read `conversation_summaries.db` in read-only mode. `CASCADE_RUN_STATUS_RUNNING` or `not_fully_idle`
+keeps the conversation working; an idle summary must cover the latest meaningful transcript step before its reply counts as
+done. Missing or unavailable summaries leave text-only replies unknown. Test the gap after narration and before the next tool
+step, plus stale idle summaries, actual completion and unavailable stores, through the normal runtime inventory protocol.
+
+## Runtime close is independent of terminal access (#3507)
+
+A runtime can implement `session.close` while exposing no terminal controls. Carry its declared close capability to the
+session row and use it in the web menu and confirmation. Antigravity must cancel its active prompt and withdraw permissions
+before closing. A queued prompt or late permission request must respect closure. Test through the runtime protocol, including
+a native agent that rejects `session/close`, and republish the closed inventory after a node reconnect.

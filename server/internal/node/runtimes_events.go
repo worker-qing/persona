@@ -89,7 +89,8 @@ func (n *Node) runtimeEvent(h *runtimeConn, event string, params json.RawMessage
 }
 
 // normalizeRuntimeSessions keeps the sessions a runtime may list (valid ids, once each) and fills what the apps expect:
-// the agent and its label, the space kind (the runtime's id).
+// the agent and its label, the space kind (the runtime's id). It works in place: the rows kept are list's first ones,
+// in list's own array, the rest cleared, so list is the caller's to give up.
 func normalizeRuntimeSessions(h *runtimeConn, list []proto.Session) []proto.Session {
 	h.mu.Lock()
 	rt, agent, label, caps, daemon := h.hello.Runtime, h.hello.Agent, h.hello.Name, h.hello.Caps, h.daemon != ""
@@ -104,7 +105,7 @@ func normalizeRuntimeSessions(h *runtimeConn, list []proto.Session) []proto.Sess
 	if !caps.Send {
 		readOnly = label + " 没有开放从手机发消息"
 	}
-	seen := map[string]bool{}
+	seen := make(map[string]bool, len(list))
 	panes := map[string]string{}
 	defer func() {
 		h.mu.Lock()
@@ -116,7 +117,7 @@ func normalizeRuntimeSessions(h *runtimeConn, list []proto.Session) []proto.Sess
 		}
 		h.mu.Unlock()
 	}()
-	out := make([]proto.Session, 0, len(list))
+	out := list[:0] // row i is written at or before i, after it was read
 	for _, s := range list {
 		if !runtimeIDRe.MatchString(s.SessionID) || seen[s.SessionID] {
 			continue
@@ -139,13 +140,13 @@ func normalizeRuntimeSessions(h *runtimeConn, list []proto.Session) []proto.Sess
 		// sending, interrupting, answering cards and every terminal control on capabilities, the hub guards sends.
 		// What a runtime declared, never more: no terminal, no attach, cards always answerable (they are its own asks).
 		s.SourceKind, s.SourceInstanceID, s.SourceThreadID, s.ParentThreadID = proto.SourceRuntime, rt, "", ""
-		if rt == paseoRuntimeID {
-			s.Host = proto.EnginePaseo // an engine host, though no terminal (#2576)
+		if rt == paseoRuntimeID || rt == cindyRuntimeID {
+			s.Host = rt // an engine host, though no terminal (#2576)
 		} else {
 			s.Host = ""
 		}
 		s.Capabilities = &proto.SessionCapabilities{Read: true, Send: caps.Send, Interrupt: caps.Interrupt, Approve: true,
-			Modes: proto.CanModes(runtimeModes(caps.Modes, rt, s))}
+			Close: &caps.Close, Modes: proto.CanModes(runtimeModes(caps.Modes, rt, s))}
 		s.ReadOnlyReason, s.Attached, s.CodexRoute, s.CodexRouteNote = readOnly, false, "", ""
 		// The pane is the engine's to show (pi.go joins it with the engine's pane), not part of the runtime's row.
 		if s.PaneID != "" && validPane(s.PaneID) {
@@ -167,6 +168,7 @@ func normalizeRuntimeSessions(h *runtimeConn, list []proto.Session) []proto.Sess
 		runtimeWork(&s)
 		out = append(out, s)
 	}
+	clear(list[len(out):]) // the rows left out hold no strings
 	return out
 }
 
