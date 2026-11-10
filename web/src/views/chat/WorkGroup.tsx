@@ -97,7 +97,7 @@ export const WorkGroup = memo(function WorkGroup({ g, p }: { g: WorkGroupNode; p
   // stayed at "Loading N steps" then); once in, the folds are gone and this has nothing left to do. The outer group fetches
   // its nested groups' folds too.
   const folds = useMemo(() => (open && !p.nested ? foldsOf(g) : []), [open, p.nested, g]);
-  const foldKey = folds.map((f) => f.id).join(" ");
+  const foldKey = folds.map((f) => JSON.stringify([f.id, f.seq, f.fold?.through_seq, f.fold?.through_id])).join(" ");
   const expandFold = p.expandFold;
   // a fetch that failed (the hub restarting, the network): the group says so, and "Retry" runs it again
   const [failed, setFailed] = useState(false);
@@ -117,7 +117,7 @@ export const WorkGroup = memo(function WorkGroup({ g, p }: { g: WorkGroupNode; p
     return () => {
       live = false;
     };
-    // the folds by their ids: a new `g` with the same folds is not a new fetch
+    // A changed range needs a new fetch even when its first item's id stayed the same.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [foldKey, expandFold, attempt]);
   return (

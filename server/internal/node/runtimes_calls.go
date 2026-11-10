@@ -100,6 +100,7 @@ type runtimeCallParams struct {
 	Images         []proto.Image `json:"images"`
 	SinceSeq       int           `json:"since_seq"`
 	FoldWork       bool          `json:"fold_work"`
+	FoldNarration  bool          `json:"fold_narration"`
 	LazyImages     bool          `json:"lazy_images"`
 	UserInputs     bool          `json:"user_inputs"`
 	AfterSeq       *int          `json:"after_seq"`
@@ -173,7 +174,11 @@ func (n *Node) runtimeHandle(ctx context.Context, h *runtimeConn, method string,
 		if json.Unmarshal(page["items"], &items) != nil {
 			return out, nil, true
 		}
-		folded, _ := json.Marshal(nonNil(transcript.FoldWork(items)))
+		fold := transcript.FoldWork
+		if p.FoldNarration {
+			fold = transcript.FoldWorkWithNarration
+		}
+		folded, _ := json.Marshal(nonNil(fold(items)))
 		page["items"] = folded
 		return page, nil, true
 	case "session.image", "session.item":

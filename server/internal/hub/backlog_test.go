@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -45,6 +46,42 @@ func fakeNode(t *testing.T, n int) *Machine {
 	m := newMachine(&Hub{}, MachineConfig{ID: "m1", Name: "m1"})
 	m.peer = hubSide
 	return m
+}
+
+func TestSubscribeNegotiatesNarrationFolding(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		work, narration bool
+	}{
+		{"legacy", true, false},
+		{"opted in", true, true},
+		{"without work folding", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHub(t)
+			asked := make(chan map[string]any, 1)
+			boardNode(t, h, "m1", func(_ context.Context, method string, params json.RawMessage) (any, error) {
+				if method == "session.items" {
+					var p map[string]any
+					_ = json.Unmarshal(params, &p)
+					asked <- p
+					return map[string]any{"items": []proto.Item{}}, nil
+				}
+				return map[string]any{"ok": true}, nil
+			})
+			c := &client{out: make(chan []byte, 16), subs: map[[2]string]bool{}}
+			b, _ := json.Marshal(map[string]any{"type": "subscribe", "machine_id": "m1", "session_id": "s1", "fold_work": tc.work, "fold_narration": tc.narration})
+			h.onClientMessage(context.Background(), c, b)
+			select {
+			case p := <-asked:
+				if (p["fold_narration"] == true) != (tc.work && tc.narration) {
+					t.Fatalf("subscription lost its folding capability: %+v", p)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("subscription did not request a backlog")
+			}
+		})
+	}
 }
 
 type batch struct {
@@ -156,18 +193,22 @@ func TestBacklogFoldsOnlyTheLatestPage(t *testing.T) {
 	m := newMachine(&Hub{}, MachineConfig{ID: "m1", Name: "m1"})
 	m.peer = hubSide
 	for _, tc := range []struct {
-		fold  bool
-		since int
-		want  bool
-	}{{true, 0, true}, {true, 5, false}, {false, 0, false}} {
-		c := &client{out: make(chan []byte, 64), subs: map[[2]string]bool{}, fold: tc.fold}
+		fold, narration bool
+		since           int
+		want            bool
+	}{{true, false, 0, true}, {true, true, 0, true}, {true, true, 5, false}, {false, true, 0, false}, {false, false, 0, false}} {
+		c := &client{out: make(chan []byte, 64), subs: map[[2]string]bool{}, fold: tc.fold, foldNarration: tc.narration}
 		(&Hub{}).sendBacklog(context.Background(), c, m, "s1", tc.since)
 		var p struct {
-			FoldWork bool `json:"fold_work"`
+			FoldWork      bool `json:"fold_work"`
+			FoldNarration bool `json:"fold_narration"`
 		}
 		_ = json.Unmarshal([]byte(<-asked), &p)
 		if p.FoldWork != tc.want {
 			t.Fatalf("subscribed with fold_work %v, since %d: asked the node with fold_work %v", tc.fold, tc.since, p.FoldWork)
+		}
+		if p.FoldNarration != (tc.want && tc.narration) {
+			t.Fatalf("narration folding must require an opted-in latest-page read: %+v", p)
 		}
 	}
 }

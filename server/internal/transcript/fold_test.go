@@ -65,7 +65,7 @@ func TestFoldedFirstPageOfALongSession(t *testing.T) {
 	}
 	page, _, _ := f.PageTurns(0, 2, 2000)
 	whole, _ := json.Marshal(page)
-	folded := FoldWork(page)
+	folded := FoldWorkWithNarration(page)
 	b, _ := json.Marshal(folded)
 	t.Logf("first page: %d items, %d bytes; folded: %d items, %d bytes", len(page), len(whole), len(folded), len(b))
 	if len(folded) > 40 || len(b) > 32<<10 {

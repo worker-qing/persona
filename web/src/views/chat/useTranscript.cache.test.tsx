@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearFeedCache, feedCacheScope, readFeedCache, readMemoryPage, writeFeedCache, type FeedCache } from "../../lib/feed-cache";
-import { getState, type listenSession, type ItemsEvent } from "../../lib/store";
+import { getState, send, type listenSession, type ItemsEvent } from "../../lib/store";
 import { chooseManager, resetManagerChoice } from "../../lib/manager-choice";
 import type { Item, ItemsPage } from "../../lib/types";
 import { useTranscript, type Transcript } from "./useTranscript";
@@ -26,7 +26,7 @@ vi.mock("../../lib/store", async (original) => ({
     listener = next;
     return () => { listener = undefined; };
   },
-  send: () => {},
+  send: vi.fn(),
 }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,6 +57,7 @@ beforeEach(() => {
   localStorage.setItem("persona.token", "test-credential");
   scope = feedCacheScope()!;
   calls.length = 0;
+  vi.mocked(send).mockClear();
   renders = [];
   root = createRoot(document.createElement("div"));
 });
@@ -323,5 +324,114 @@ describe("recovering from a failed first read", () => {
     await fail();
     push({ items: [item("later", 30)], history: "v1", to_seq: 30, backlog: true, has_more: true });
     expect(ids()).toEqual(["later"]);
+  });
+});
+
+describe("narration fold expansion", () => {
+  const fold: Item = { id: "fold:note1#0", seq: 11, role: "assistant", kind: "fold", fold: { through_seq: 13, through_id: "note3#0", items: 3, tools: 0, thoughts: 0 } };
+  const notes = [1, 2, 3].map((n): Item => ({ ...item(`note${n}#0`, n + 10), narration: true }));
+  const page = { items: [item("question", 10, "Question", "user"), fold, item("answer", 14)], history: "v1" };
+  const open = (f = fold) => {
+    let done!: Promise<unknown>;
+    act(() => { done = shown.expandFold(f).then(() => null, (e: unknown) => e); });
+    return done;
+  };
+
+  it("opts in on both HTTP pages and socket subscriptions", async () => {
+    render();
+    expect(calls[0].path).toContain("fold_narration=1");
+    await answer(page);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: "subscribe", fold_work: true, fold_narration: true }));
+  });
+
+  it("removes a pure text fold only after all pages arrive, without persisting the expansion", async () => {
+    render();
+    await answer(page);
+    const cached = readFeedCache(scope);
+    const done = open();
+    await answer({ items: notes.slice(0, 2), more: true });
+    expect(ids()).toContain(fold.id);
+    expect(ids()).not.toContain(notes[0].id);
+    expect(calls[0].path).toContain("from_seq=13");
+    await answer({ items: notes.slice(2), more: false });
+    expect(await done).toBeNull();
+    expect(ids()).toEqual(["question", ...notes.map((n) => n.id), "answer"]);
+    expect(readFeedCache(scope)).toEqual(cached);
+  });
+
+  it("clears a fully read empty range instead of retaining a loading placeholder", async () => {
+    render();
+    await answer(page);
+    const done = open();
+    await answer({ items: [], more: false });
+    expect(await done).toBeNull();
+    expect(ids()).toEqual(["question", "answer"]);
+  });
+
+  it("preserves user-visible supervision metadata when replacing the fold", async () => {
+    const visible = { ...fold, fold: { ...fold.fold!, supervision_user: true } };
+    render();
+    await answer({ ...page, items: [page.items[0], visible, page.items[2]] });
+    const done = open(visible);
+    await answer({ items: notes, more: false });
+    expect(await done).toBeNull();
+    expect(shown.items.filter((i) => i.narration).every((i) => i.supervisionUser)).toBe(true);
+    expect(ids()).not.toContain(fold.id);
+  });
+
+  it("preserves the fold on a later-page failure and retries from its beginning", async () => {
+    render();
+    await answer(page);
+    const done = open();
+    await answer({ items: notes.slice(0, 1), more: true });
+    await fail();
+    expect(await done).toBeInstanceOf(Error);
+    expect(ids()).toEqual(["question", fold.id, "answer"]);
+    const retry = open();
+    expect(calls[0].path).toContain("from_seq=11");
+    await answer({ items: notes.map((n) => ({ ...n, narration: undefined })), more: false });
+    expect(await retry).toBeNull();
+    expect(ids()).toEqual(["question", ...notes.map((n) => n.id), "answer"]);
+  });
+
+  it.each([{ items: [] }, { items: [item("stale", 10)] }])("rejects a nonadvancing continuation without losing the fold: %j", async ({ items }) => {
+    render();
+    await answer(page);
+    const done = open();
+    await answer({ items, more: true });
+    expect(await done).toEqual(new Error("Incomplete folded range"));
+    expect(ids()).toEqual(["question", fold.id, "answer"]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("keeps the fold and offers retry if the bounded read is incomplete", async () => {
+    const large = { ...fold, fold: { ...fold.fold!, through_seq: 100, through_id: "last#0" } };
+    render();
+    await answer({ items: [large], history: "v1" });
+    const done = open(large);
+    for (let i = 0; i < 20; i++) await answer({ items: [item(`note${i}#0`, 11 + i)], more: true });
+    expect(await done).toBeInstanceOf(Error);
+    expect(ids()).toEqual([fold.id]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not replace a newer, larger fold with a stale expansion", async () => {
+    render();
+    await answer(page);
+    const done = open();
+    const newer = { ...fold, fold: { ...fold.fold!, through_seq: 20, through_id: "newer#0" } };
+    push({ items: [page.items[0], newer, item("latest", 21)], history: "v1", to_seq: 21, has_more: false, backlog: true });
+    await answer({ items: notes, more: false });
+    expect(await done).toBeNull();
+    expect(shown.items.find((i) => i.id === fold.id)).toEqual(newer);
+    expect(ids()).not.toContain(notes[0].id);
+  });
+
+  it("replaces cached narration when the refreshed page folds it", async () => {
+    writeFeedCache(scope, saved({ items: [page.items[0], ...notes, page.items[2]] }));
+    render();
+    expect(ids()).toContain(notes[0].id);
+    await answer(page);
+    expect(shown.items).toEqual(page.items);
   });
 });

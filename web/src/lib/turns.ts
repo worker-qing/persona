@@ -86,6 +86,15 @@ export function sortItems(items: Item[]): Item[] {
   return [...items].sort(blockOrder);
 }
 
+function inFold(item: Item, fold: Item): boolean {
+  if (!fold.fold || item.seq < fold.seq || item.seq > fold.fold.through_seq) return false;
+  if (item.seq === fold.seq && blockOrder(item, { ...fold, id: fold.id.replace(/^fold:/, "") }) < 0) return false;
+  return item.seq !== fold.fold.through_seq || !fold.fold.through_id || blockOrder(item, { ...fold, seq: fold.fold.through_seq, id: fold.fold.through_id }) <= 0;
+}
+
+// The range is authoritative even when an older hub dropped the optional narration flag.
+const foldText = (item: Item) => item.kind === "text" && item.role === "assistant";
+
 // Merge a batch into what we have, by id. A fold stands for a range of work: once any real step of that range
 // is here (the fold was expanded, or a later page overlaps it) the fold goes.
 export function mergeItems(have: Item[], batch: Item[]): Item[] {
@@ -97,14 +106,14 @@ export function mergeItems(have: Item[], batch: Item[]): Item[] {
     byId.set(it.id, next);
   }
   const all = [...byId.values()];
-  const work = all.filter((i) => i.kind === "tool_use" || i.kind === "tool_result" || i.kind === "thinking");
+  const work = all.filter((i) => i.kind === "tool_use" || i.kind === "tool_result" || i.kind === "thinking" || foldText(i));
   const promotedFolds = all.filter((i) => i.fold?.supervision_user);
-  const kept = all.filter((f) => f.kind !== "fold" || !f.fold || !work.some((i) => i.seq >= f.seq && i.seq <= f.fold!.through_seq));
+  const kept = all.filter((f) => f.kind !== "fold" || !f.fold || !work.some((i) => inFold(i, f)));
   // An overlapping page may replace only part of a fold. Its authoritative promotion must survive that replacement,
   // even if the real visibility tool is on the part that has not arrived yet, or a later receipt says silent.
   if (!promotedFolds.length) return sortItems(kept);
   const realWork = new Set(work);
-  return sortItems(kept.map((i) => realWork.has(i) && promotedFolds.some((f) => i.seq >= f.seq && i.seq <= f.fold!.through_seq) ? { ...i, supervisionUser: true } : i));
+  return sortItems(kept.map((i) => realWork.has(i) && promotedFolds.some((f) => inFold(i, f)) ? { ...i, supervisionUser: true } : i));
 }
 
 /** `have` without what a fold of this fresh page now stands for. Left in, a step kept from before the fold existed
@@ -112,7 +121,7 @@ export function mergeItems(have: Item[], batch: Item[]): Item[] {
 export function withoutFolded(have: Item[], page: Item[]): Item[] {
   const folds = page.filter((f) => f.fold);
   if (!folds.length) return have;
-  return have.filter((i) => !((i.kind === "thinking" || i.kind === "fold" || i.tool_use_id) && folds.some((f) => i.seq >= f.seq && i.seq <= f.fold!.through_seq)));
+  return have.filter((i) => !((i.kind === "thinking" || i.kind === "fold" || i.tool_use_id || foldText(i)) && folds.some((f) => inFold(i, f))));
 }
 
 // Only the canonical persona-context tag is recognized.

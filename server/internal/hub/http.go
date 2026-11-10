@@ -469,6 +469,9 @@ func (h *Hub) sessionItems(w http.ResponseWriter, r *http.Request, m *Machine) {
 	}
 	if q.Get("fold_work") == "1" {
 		params["fold_work"] = true // runs of tools and thoughts come as one fold each (transcript.FoldWork)
+		if q.Get("fold_narration") == "1" {
+			params["fold_narration"] = true
+		}
 	}
 	if q.Has("through_seq") { // opening a fold: its lines, from_seq through through_seq
 		params["from_seq"], params["through_seq"] = atoi(q.Get("from_seq")), atoi(q.Get("through_seq"))
@@ -947,6 +950,7 @@ type client struct {
 	clean           bool
 	lazy            bool // asked for items without image data (subscribe with lazy_images)
 	fold            bool // asked for backlogs with the agent's work folded (subscribe with fold_work)
+	foldNarration   bool // can replace folded progress text as well as tools and thoughts
 	name            string
 	since           time.Time
 	meta            clientMeta // what it said about itself in client_hello (clientmeta.go)
@@ -1260,22 +1264,23 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 
 func (h *Hub) onClientMessage(ctx context.Context, c *client, data []byte) {
 	var msg struct {
-		Type       string          `json:"type"`
-		MachineID  string          `json:"machine_id"`
-		SessionID  string          `json:"session_id"`
-		SinceSeq   int             `json:"since_seq"`
-		LazyImages bool            `json:"lazy_images"`
-		FoldWork   bool            `json:"fold_work"`
-		DeviceName string          `json:"device_name"`
-		DeviceID   string          `json:"device_id"` // register_phone / register_desktop: the app's id for pushes
-		Platform   string          `json:"platform"`
-		Simulator  bool            `json:"simulator"`
-		Tools      []proto.Tool    `json:"tools"`
-		CallID     string          `json:"call_id"`
-		Content    []proto.Content `json:"content"`
-		IsError    bool            `json:"is_error"`
-		Epoch      string          `json:"epoch"`
-		AfterSeq   int             `json:"after_seq"`
+		Type          string          `json:"type"`
+		MachineID     string          `json:"machine_id"`
+		SessionID     string          `json:"session_id"`
+		SinceSeq      int             `json:"since_seq"`
+		LazyImages    bool            `json:"lazy_images"`
+		FoldWork      bool            `json:"fold_work"`
+		FoldNarration bool            `json:"fold_narration"`
+		DeviceName    string          `json:"device_name"`
+		DeviceID      string          `json:"device_id"` // register_phone / register_desktop: the app's id for pushes
+		Platform      string          `json:"platform"`
+		Simulator     bool            `json:"simulator"`
+		Tools         []proto.Tool    `json:"tools"`
+		CallID        string          `json:"call_id"`
+		Content       []proto.Content `json:"content"`
+		IsError       bool            `json:"is_error"`
+		Epoch         string          `json:"epoch"`
+		AfterSeq      int             `json:"after_seq"`
 		// terminal_subscribe, terminal_input: the grid the app drives the terminal at (docs/integrations/terminal.md)
 		Control  *termCtl `json:"control"`
 		Takeover bool     `json:"takeover"`
@@ -1366,6 +1371,9 @@ func (h *Hub) onClientMessage(ctx context.Context, c *client, data []byte) {
 		}
 		if msg.FoldWork {
 			c.fold = true
+			if msg.FoldNarration {
+				c.foldNarration = true
+			}
 		}
 		c.mu.Unlock()
 		if !already {
@@ -1442,7 +1450,7 @@ func (h *Hub) sendBacklog(ctx context.Context, c *client, m *Machine, sid string
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	c.mu.Lock()
-	lazy, fold := c.lazy, c.fold
+	lazy, fold, foldNarration := c.lazy, c.fold, c.foldNarration
 	c.mu.Unlock()
 	after := since
 	for page := 0; ; page++ {
@@ -1451,6 +1459,9 @@ func (h *Hub) sendBacklog(ctx context.Context, c *client, m *Machine, sid string
 			params["after_seq"] = after
 		} else if fold {
 			params["fold_work"] = true
+			if foldNarration {
+				params["fold_narration"] = true
+			}
 		}
 		var res struct {
 			Items     []proto.Item `json:"items"`

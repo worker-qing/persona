@@ -540,6 +540,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		LazyImages       bool          `json:"lazy_images"`
 		UserInputs       bool          `json:"user_inputs"`
 		FoldWork         bool          `json:"fold_work"`
+		FoldNarration    bool          `json:"fold_narration"`
 		FromSeq          int           `json:"from_seq"`
 		ThroughSeq       int           `json:"through_seq"`
 		Name             string        `json:"name"`
@@ -1156,6 +1157,9 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		// Pages counted back from the end fold the agent's work for callers that ask (transcript.FoldWork).
 		fold := func(page []proto.Item) []proto.Item {
 			if p.FoldWork {
+				if p.FoldNarration {
+					return transcript.FoldWorkWithNarration(page)
+				}
 				return transcript.FoldWork(page)
 			}
 			return page

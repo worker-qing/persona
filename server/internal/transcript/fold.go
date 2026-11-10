@@ -26,6 +26,15 @@ const (
 // A call whose result is not in the page (still running) and a result whose call is not (on an older page) are not
 // folded: the app pairs them with what comes later or earlier, and a fold hides them from that.
 func FoldWork(items []proto.Item) []proto.Item {
+	return foldWork(items, false)
+}
+
+// FoldWorkWithNarration also folds superseded progress text. Only clients that opt in can replace those folds.
+func FoldWorkWithNarration(items []proto.Item) []proto.Item {
+	return foldWork(items, true)
+}
+
+func foldWork(items []proto.Item, narration bool) []proto.Item {
 	// Preserve the last user-facing text of each exchange, including interrupted turns without a final answer.
 	latestText := map[int]bool{}
 	last := -1
@@ -60,7 +69,7 @@ func FoldWork(items []proto.Item) []proto.Item {
 	inFold := func(it proto.Item, index int) bool {
 		switch it.Kind {
 		case proto.KindText:
-			return it.Role == "assistant" && it.Narration && !latestText[index]
+			return narration && it.Role == "assistant" && it.Narration && !latestText[index]
 		case proto.KindThinking:
 			return true
 		case proto.KindToolUse, proto.KindToolResult, proto.KindImage: // a tool's image goes with its call

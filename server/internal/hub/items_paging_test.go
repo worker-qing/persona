@@ -19,6 +19,10 @@ func TestSessionItemsForwardsOnlyTheGivenPaging(t *testing.T) {
 		{"user_inputs=0", map[string]any{"session_id": "s1"}},
 		{"before_seq=40&limit=50", map[string]any{"session_id": "s1", "before_seq": 40.0, "limit": 50.0}},
 		{"before_seq=0", map[string]any{"session_id": "s1", "before_seq": 0.0}},
+		{"fold_work=1", map[string]any{"session_id": "s1", "fold_work": true}},
+		{"fold_work=1&fold_narration=1", map[string]any{"session_id": "s1", "fold_work": true, "fold_narration": true}},
+		{"fold_work=1&fold_narration=0", map[string]any{"session_id": "s1", "fold_work": true}},
+		{"fold_narration=1", map[string]any{"session_id": "s1"}},
 	} {
 		var got map[string]any
 		m := wireNode(t, func(p json.RawMessage) any {

@@ -1919,10 +1919,19 @@ Codex `AgentMessage` records with `phase: commentary` are user-facing `kind: tex
 item id, text or sequence, and does not replace the session's last-answer metadata. Older clients
 can ignore the flag and render the item as ordinary text.
 
-With `fold_work`, superseded narration can join the execution summary. The latest assistant text
+With both `fold_work` and `fold_narration`, superseded narration can join the execution summary. The latest assistant text
 of each exchange stays outside the fold, even when tools or reasoning follow it, or an interrupted
 turn has no final answer. A final answer supersedes that turn's narration. Opening the summary
 still returns the original narration in full; it is not replaced with a one-line thinking preview.
+
+`fold_narration` is an explicit client capability (`fold_narration=1` on HTTP pages and
+`fold_narration: true` on subscriptions). It has no effect without `fold_work`. Without it, the node
+keeps narration as ordinary text and folds only the legacy work kinds. Older clients do not opt in.
+An older hub that drops the flag selects legacy behavior on an updated node; pre-narration nodes
+ignore it and keep their original tool/thinking fold format. An intermediate node that already
+folds narration unconditionally must be upgraded before serving legacy clients. The web opts in on
+both paths. Other clients must support replacing text-containing folds before opting in. Legacy
+pages from the updated node can be larger, but never contain a narration-only fold.
 
 The tool calls and thinking of a turn are normally folded into one line in the chat ("Tools 502 · Thinking 81"). But in one long Codex session, the page for the last two turns had 1412 items and 1.08 MB,
 with only 6 actual replies: on a weak network the top of the chat page kept spinning. When a request carries `fold_work` (HTTP `fold_work=1`, `fold_work: true` when subscribing), pages read backward from the end
@@ -1954,7 +1963,9 @@ with one item of `kind: fold` (`transcript.FoldWork`):
 - Not folded: user messages, replies (text other than superseded narration), notifications, recaps; a tool_use whose result is not on this page (still running) and a tool_result whose tool_use is not on this page
   (the App has to pair them with the other half that comes later / came earlier); short runs under 3 items and under 4 KB (expanding costs another round trip; not worth it).
 - When the App expands a work row it fetches the run with `from_seq=<fold.seq>&through_seq=<fold.through_seq>` (about 1000 items per page; on `more`, continue from the last item's seq + 1),
-  merges it in and drops the fold. When a fold is merged in, local tool / thinking items within its range (by seq + block index) are replaced by it.
+  merges it in and drops the fold. A fully read range removes its exact placeholder even when empty; a failed or incomplete read keeps the fold for retry.
+  A stale expansion must not replace a newer range with the same fold id. When a fold is merged in, local tool / thinking / assistant text items within its range
+  (by seq + block index) are replaced by it, regardless of whether the optional narration flag survived a relay. Text outside those bounds, including another block on the same line, stays.
 - Resends via `after_seq` and live pushes are never folded: they continue from what the App already has, and may contain tool calls the App is waiting on.
 - A page like that 1412-item / 1.08 MB one becomes a dozen or so items and a few KB after folding (`TestFoldedFirstPageOfALongSession`: 1417 items, 880 KB → 13 items, 1.9 KB).
 
@@ -2143,7 +2154,7 @@ hub → node requests:
 | `fs.watch` | #2439: `{dirs: [{path, cwd}], git: [cwd]}` → `{ok}`, **replaces the whole set** of folders and Git directories the node watches (at most 32 folders and 8 Git directories; an empty set stops the watch loop). Old nodes report unknown method; the hub logs a line and the page keeps refreshing manually |
 | `file.read` | `{path, cwd, offset}` → same as REST `file` (old nodes don't know `offset`, and their reply has no `offset` / `next`) |
 | `fs.stat` | `{paths, cwd}` → `{stats}`, same as REST `stat` (old nodes report unknown method, and the phone links no paths) |
-| `session.items` | `{session_id, user_inputs?, before_seq, limit, turns, after_seq, lazy_images, fold_work, from_seq, through_seq}` → `{items, has_more, more_after, history, to_seq, from_seq}` (with `through_seq` it is the folded rows: `{items, more}`) (`from_seq` is only present in `after_seq` requests; without `lazy_images: true` the node reads image data back, for compatibility with old hubs). With `user_inputs:true`, returns only `{total, inputs:[{id,seq}], history}` for the full conversation (#2338), with no body/image data; runtime sessions use their existing item pages server-side. The richer #2071 contract remains independent. |
+| `session.items` | `{session_id, user_inputs?, before_seq, limit, turns, after_seq, lazy_images, fold_work, fold_narration, from_seq, through_seq}` → `{items, has_more, more_after, history, to_seq, from_seq}` (with `through_seq` it is the folded rows: `{items, more}`) (`from_seq` is only present in `after_seq` requests; without `lazy_images: true` the node reads image data back, for compatibility with old hubs). With `user_inputs:true`, returns only `{total, inputs:[{id,seq}], history}` for the full conversation (#2338), with no body/image data; runtime sessions use their existing item pages server-side. The richer #2071 contract remains independent. |
 | `session.image` | `{session_id, item_id}` → `Image{mime, data}` (the node's items don't keep image data in memory; it rereads that line at the recorded line offset) |
 | `session.item` | `{session_id, item_id}` → `Item` (full text, no images) |
 | `session.watch` / `session.unwatch` | `{session_id, since_seq?}`; after watch the node reads new lines every 250ms and pushes `session.items` (with `history` / `from_seq` / `to_seq`); with `since_seq` it first resends everything after it, 500 items per page. The hub sends only one watch / unwatch at a time per session, and when its turn comes decides which to send, or whether to send at all, by the subscriber count at that moment (the node does nothing on a watch for a session already watched, so the two arriving out of order would leave the last subscriber without live content); a failed one is retried next time |
@@ -2663,7 +2674,7 @@ node → runtime requests (sent only on the connection that owns the session; al
 
 | Request | Description |
 | --- | --- |
-| `session.items` | params and result as in hub → node `session.items` (`before_seq` / `turns` / `limit` / `after_seq` / `from_seq` + `through_seq`); images are always placeholders (`lazy`), with content fetched via `session.image`. `fold_work` is applied by the node on the result (`transcript.FoldWork`); the runtime doesn't deal with it |
+| `session.items` | params and result as in hub → node `session.items` (`before_seq` / `turns` / `limit` / `after_seq` / `from_seq` + `through_seq`); images are always placeholders (`lazy`), with content fetched via `session.image`. `fold_work` (and opt-in `fold_narration`) is applied by the node on the result; the runtime does not deal with folding |
 | `session.image {session_id, item_id}` → `{mime, data}`, `session.item {session_id, item_id}` → `Item` | raw image data, full text of a truncated item |
 | `session.watch {session_id, since_seq, transcript?}` / `session.unwatch` | start / stop pushing this session's new content; with `since_seq > 0`, first replay what comes after it, at most eight pages and with `more_after` on the last when more remains. The node remembers how far each watched session has been pushed, and re-watches from that seq when the runtime lists it after reconnecting. `transcript: true`: the node pushes content from the transcript, and the runtime only pushes streaming text |
 | `session.send {session_id, text, images, client_msg_id, assistant?, context?, mode?, memory_dir?}` | send a message (`assistant` and the following fields are only sent for assistant chats on runtimes that declared `caps.assistant`: `docs/integrations/runtimes.md` ("Assistant")). `client_msg_id` is given to the runtime for idempotency (the node itself also dedups on it for 10 minutes), and the node also uses it to recognize this message among items the runtime pushes ("Matching pending messages"); a runtime that knows which item is this message can put `client_msg_id` on the item directly, and the node forwards it as is. The runtime returning the error `code: handover` (`data.delivered: "none"`) means it doesn't take this session and has started the program that can run it (a read-only-disk companion process): the node waits for another connection to list the session as non-`offline`, or asks the other runtimes every 2 seconds whether they have it (`session.items {limit: 1}`), and whichever comes first gets the message; if none within 45 seconds, it returns `not_running` and nothing is sent |

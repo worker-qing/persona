@@ -11,7 +11,7 @@ import type { Item, ItemsPage } from "../../lib/types";
 import { createTextThrottle, type TextThrottle } from "../../ui/stream/throttle";
 import { unlandedLive } from "../../lib/live-text";
 
-const PAGE = "turns=2&fold_work=1&lazy_images=1";
+const PAGE = "turns=2&fold_work=1&lazy_images=1&fold_narration=1";
 /** How often a page checks whether it is behind (a pure comparison; nothing is asked unless it is, lib/stale-page.ts). */
 const STALE_TICK_MS = 2000;
 /** When each session was last asked for what its stream may have lost: kept across remounts, so reopening a page does not ask again at once. */
@@ -192,7 +192,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       showLive();
     };
 
-    const subscribe = () => send({ type: "subscribe", machine_id: mid, session_id: sid, since_seq: covered.current || undefined, lazy_images: true, fold_work: true });
+    const subscribe = () => send({ type: "subscribe", machine_id: mid, session_id: sid, since_seq: covered.current || undefined, lazy_images: true, fold_work: true, fold_narration: true });
 
     // Items after what we have, a page at a time (past 8 the newest page is cheaper); how many of them were new.
     const pull = async (): Promise<number> => {
@@ -389,12 +389,23 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
         const p = await api<ItemsPage>(`${sessionPath(mid, sid)}/items?from_seq=${from}&through_seq=${fold.fold.through_seq}&lazy_images=1`);
         if (gen !== generation.current) return;
         out.push(...(p.items ?? []));
-        if (!p.more || !p.items?.length) break;
-        from = p.items[p.items.length - 1].seq + 1;
+        if (!p.more) {
+          setItems((have) => {
+            if (gen !== generation.current) return have;
+            const current = have.find((it) => it.id === fold.id);
+            if (current?.fold && (current.fold.through_seq !== fold.fold!.through_seq || current.fold.through_id !== fold.fold!.through_id)) return have;
+            return mergeItems(have, out).filter((it) => it.id !== fold.id);
+          });
+          return;
+        }
+        const last = p.items?.at(-1);
+        if (!last || last.seq < from || last.seq >= fold.fold.through_seq) break;
+        from = last.seq + 1;
       }
-      apply(out);
+      // WorkGroup catches this and offers its localized retry, keeping the original fold intact.
+      throw new Error("Incomplete folded range");
     },
-    [mid, sid, apply],
+    [mid, sid],
   );
 
   return { items, history: history.current, loading, firstRead, error, hasMore, loadingEarlier, loadEarlier, expandFold, streaming, notLive, reload: () => setNonce((x) => x + 1) };

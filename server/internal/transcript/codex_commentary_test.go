@@ -1,6 +1,8 @@
 package transcript
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/proto"
@@ -27,7 +29,7 @@ func TestCodexCommentaryRemainsUserFacingText(t *testing.T) {
 		{ID: "call", Seq: 3, Kind: proto.KindToolUse, ToolUseID: "tool", ToolName: "Read"},
 		{ID: "result", Seq: 4, Kind: proto.KindToolResult, ToolUseID: "tool"},
 	}
-	folded := FoldWork(work)
+	folded := FoldWorkWithNarration(work)
 	if len(folded) != 2 || folded[0].ID != item.ID || folded[0].Kind != proto.KindText || folded[0].Text != item.Text || folded[1].Kind != proto.KindFold {
 		t.Fatalf("the reply must survive compact pages while work remains folded: %+v", folded)
 	}
@@ -43,7 +45,7 @@ func TestFoldNarrationKeepsLatestTextPerExchange(t *testing.T) {
 		narration("next", 5), narration("later", 6), narration("newest", 7),
 		{ID: "thought", Seq: 8, Role: "assistant", Kind: proto.KindThinking, Text: "Inspecting the remaining case."},
 	}
-	folded := FoldWork(items)
+	folded := FoldWorkWithNarration(items)
 	for _, id := range []string{"interrupted", "newest"} {
 		found := false
 		for _, it := range folded {
@@ -55,7 +57,7 @@ func TestFoldNarrationKeepsLatestTextPerExchange(t *testing.T) {
 	}
 	// A final answer replaces the progress text outside the summary.
 	items = append(items, proto.Item{ID: "final", Seq: 9, Role: "assistant", Kind: proto.KindText, Text: "All checks passed."})
-	folded = FoldWork(items)
+	folded = FoldWorkWithNarration(items)
 	for _, it := range folded {
 		if it.ID == "newest" {
 			t.Fatal("superseded progress should be inside the execution summary")
@@ -63,5 +65,26 @@ func TestFoldNarrationKeepsLatestTextPerExchange(t *testing.T) {
 	}
 	if folded[len(folded)-1].ID != "final" {
 		t.Fatal("the final answer was folded")
+	}
+}
+
+func TestNarrationFoldingRequiresClientOptIn(t *testing.T) {
+	for _, count := range []int{1, 3} {
+		var items []proto.Item
+		for i := 0; i < count; i++ {
+			text := "A short progress note."
+			if count == 1 {
+				text = strings.Repeat("Progress. ", 512)
+			}
+			items = append(items, proto.Item{ID: strings.Repeat("n", i+1) + "#0", Seq: i + 1, Role: "assistant", Kind: proto.KindText, Narration: true, Text: text})
+		}
+		items = append(items, proto.Item{ID: "answer#0", Seq: count + 1, Role: "assistant", Kind: proto.KindText, Text: "Done."})
+		if got := FoldWork(items); !reflect.DeepEqual(got, items) {
+			t.Fatalf("legacy clients must keep narration as ordinary text: %+v", got)
+		}
+		got := FoldWorkWithNarration(items)
+		if len(got) != 2 || got[0].Kind != proto.KindFold || got[0].Fold.Items != count || got[1].ID != "answer#0" {
+			t.Fatalf("opted-in client should get a narration-only fold and answer: %+v", got)
+		}
 	}
 }

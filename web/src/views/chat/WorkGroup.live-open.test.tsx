@@ -46,6 +46,35 @@ const tap = () => act(() => header().click());
 const running = [tool(1), words(2, "First progress."), tool(3), words(4, "Latest progress."), tool(5, false)];
 const finished = [...running.slice(0, -1), tool(5), words(9, "Final result.")];
 
+it.each(["old first", "new first"])("reloads an open fold when its range grows: %s", async (order) => {
+  const finish: (() => void)[] = [];
+  const expand = vi.fn<(fold: Item) => Promise<void>>(() => new Promise<void>((resolve) => { finish.push(resolve); }));
+  const folded = (end: number): Step => ({
+    kind: "fold", id: "fold:note1#0",
+    item: { id: "fold:note1#0", seq: 1, role: "assistant", kind: "fold", fold: { items: end, tools: 0, thoughts: 0, through_seq: end, through_id: `note${end}#0` } },
+  });
+  draw("agents", seg([folded(3), words(21, "Final")]), false, expand);
+  tap();
+  await act(async () => { await Promise.resolve(); });
+  expect(expand).toHaveBeenCalledTimes(1);
+  draw("agents", seg([folded(20), words(21, "Final")]), false, expand);
+  await act(async () => { await Promise.resolve(); });
+  expect(expand).toHaveBeenCalledTimes(2);
+  expect(expand.mock.calls[1][0].fold?.through_seq).toBe(20);
+  expect(header().getAttribute("aria-expanded")).toBe("true");
+
+  if (order === "old first") {
+    await act(async () => { finish[0](); });
+    expect(detailText()).toContain("20");
+  }
+  await act(async () => { finish[1](); });
+  draw("agents", seg([words(1, "Expanded progress"), words(21, "Final")]), false, expand);
+  if (order === "new first") await act(async () => { finish[0](); });
+  expect(detailText()).toContain("Expanded progress");
+  expect(detailText()).not.toContain("Loading");
+  expect(expand).toHaveBeenCalledTimes(2);
+});
+
 describe.each(["assistant", "agents"] as const)("%s compact execution", (style) => {
   it("starts folded with one latest text, no tool or thinking preview", () => {
     draw(style, seg(running), true);
