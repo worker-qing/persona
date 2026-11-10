@@ -83,13 +83,13 @@ export function UserBubble({ msg, mid, sid, pending, sendState, starting }: { ms
         (starting ? (
           <BubbleText text={msg.text} mid={mid} sid={sid} own={own} />
         ) : pending ? (
-          <BubbleText text={msg.text} mid={mid} sid={sid} own={own} pending />
+          <BubbleText text={msg.text} mid={mid} sid={sid} own={own} pending={sendState !== "sent"} />
         ) : (
           <MessageActions text={msg.text} isUser ts={msg.ts} side messageId={msg.id} className="max-w-full">
             <BubbleText text={msg.text} ts={msg.ts} mid={mid} sid={sid} own={own} />
           </MessageActions>
         ))}
-      {(pending || msg.queued) && <span className="text-[11px] text-ink-3">{pending ? t("chat-segmentview.sending") : t("chat-segmentview.queued")}</span>}
+      {(pending || sendState === "sent" || msg.queued) && <span role={pending || sendState === "sent" ? "status" : undefined} className="text-[11px] text-ink-3">{sendState === "sent" ? t("chat-segmentview.received") : pending ? t("chat-segmentview.sending") : t("chat-segmentview.queued")}</span>}
       {!pending && !starting && <ChannelSource clientMsgId={msg.client_msg_id} />}
     </div>
   );

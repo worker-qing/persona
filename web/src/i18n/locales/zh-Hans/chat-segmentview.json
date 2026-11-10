@@ -1,5 +1,6 @@
 {
   "sending": "发送中…",
+  "received": "已接收，等待会话记录确认",
   "queued": "工作中插入的消息",
   "collapse": "收起",
   "expand": "展开",

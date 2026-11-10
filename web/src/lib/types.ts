@@ -482,6 +482,8 @@ export interface Item {
   role: "user" | "assistant" | "system";
   kind: "text" | "thinking" | "tool_use" | "tool_result" | "notice" | "image" | "fold" | "recap";
   text?: string;
+  /** User-facing progress text; older segments may be folded, never the latest text of an exchange. */
+  narration?: boolean;
   tool_use_id?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;

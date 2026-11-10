@@ -1353,12 +1353,12 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
             {!readOnly &&
               [...shownPending.map((p) => ({ at: p.at, el: (
                 <div key={p.id} className="flex flex-col gap-3">
-                  <UserBubble msg={p.msg} mid={mid} sid={sid} pending sendState="sending" />
+                  <UserBubble msg={p.msg} mid={mid} sid={sid} pending sendState={p.acceptedAt !== undefined ? "sent" : "sending"} />
                 </div>
               ) })), ...placed.rest.map((e) => ({ at: e.at, el: <OutboxBubbles key={`outbox:${e.id}`} mid={mid} sid={sid} entries={[e]} canRetry={!refusedNoRow} /> }))]
                 .sort((a, b) => a.at - b.at)
                 .map((x) => x.el)}
-            {!readOnly && (shownPending.length > 0 || outbox.some((e) => e.state === "sending") || (starting && outgoing > 0)) && (
+            {!readOnly && (shownPending.some((p) => p.acceptedAt === undefined) || outbox.some((e) => e.state === "sending") || (starting && outgoing > 0)) && (
               <div className="flex items-center gap-2.5">
                 <Loading label={starting ? t("chat-chatview.preparing") : shownPending.some((p) => p.waits) ? t("ultracode.send_waits") : online ? t("chat-chatview.delivering") : t("chat-chatview.waiting_for_hub")} />
               </div>

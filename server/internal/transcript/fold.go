@@ -26,6 +26,23 @@ const (
 // A call whose result is not in the page (still running) and a result whose call is not (on an older page) are not
 // folded: the app pairs them with what comes later or earlier, and a fold hides them from that.
 func FoldWork(items []proto.Item) []proto.Item {
+	// Preserve the last user-facing text of each exchange, including interrupted turns without a final answer.
+	latestText := map[int]bool{}
+	last := -1
+	for i, it := range items {
+		if (it.Role == "user" && (it.Kind == proto.KindText || (it.Kind == proto.KindImage && it.ToolUseID == ""))) || it.Compact != nil || it.Wake {
+			if last >= 0 {
+				latestText[last] = true
+			}
+			last = -1
+		}
+		if it.Role == "assistant" && it.Kind == proto.KindText {
+			last = i
+		}
+	}
+	if last >= 0 {
+		latestText[last] = true
+	}
 	uses, results, agents := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	taskUses := map[string]proto.Item{}
 	for _, it := range items {
@@ -40,8 +57,10 @@ func FoldWork(items []proto.Item) []proto.Item {
 			results[it.ToolUseID] = true
 		}
 	}
-	inFold := func(it proto.Item) bool {
+	inFold := func(it proto.Item, index int) bool {
 		switch it.Kind {
+		case proto.KindText:
+			return it.Role == "assistant" && it.Narration && !latestText[index]
 		case proto.KindThinking:
 			return true
 		case proto.KindToolUse, proto.KindToolResult, proto.KindImage: // a tool's image goes with its call
@@ -52,13 +71,13 @@ func FoldWork(items []proto.Item) []proto.Item {
 	}
 	out := make([]proto.Item, 0, len(items))
 	for i := 0; i < len(items); {
-		if !inFold(items[i]) {
+		if !inFold(items[i], i) {
 			out = append(out, items[i])
 			i++
 			continue
 		}
 		j, size := i, 0
-		for j < len(items) && inFold(items[j]) {
+		for j < len(items) && inFold(items[j], j) {
 			size += len(items[j].Text) + len(items[j].ToolInput)
 			j++
 		}

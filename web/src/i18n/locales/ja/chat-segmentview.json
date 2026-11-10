@@ -1,5 +1,6 @@
 {
   "sending": "送信中…",
+  "received": "受信済み・会話への記録を待っています",
   "queued": "作業中に送信",
   "collapse": "折りたたむ",
   "expand": "展開",

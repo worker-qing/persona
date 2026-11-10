@@ -1,5 +1,6 @@
 {
   "sending": "Sending…",
+  "received": "Received, waiting for the conversation record",
   "queued": "Sent while working",
   "collapse": "Show less",
   "expand": "Show more",

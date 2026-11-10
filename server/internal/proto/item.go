@@ -137,6 +137,8 @@ type Item struct {
 	IsError   bool            `json:"is_error,omitempty"`
 	Image     *Image          `json:"image,omitempty"`
 	Queued    bool            `json:"queued,omitempty"` // user input typed while the agent worked, absorbed mid-turn
+	// Narration is user-facing progress text. Older narration may fold, but the latest text remains visible.
+	Narration bool `json:"narration,omitempty"`
 	// Outcome: what a tool_result's call came to (status, exit code, patch, git…), set by the node from the
 	// runtime's record; absent on other items and from older nodes (ToolOutcome).
 	Outcome *ToolOutcome `json:"outcome,omitempty"`

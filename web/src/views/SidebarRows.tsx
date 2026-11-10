@@ -33,6 +33,8 @@ import { ariaKeyshortcuts, formatChord } from "../lib/shortcuts";
 import { PagedSessionList } from "./agents/PagedSessionList";
 import { runtimeIdentity } from "../lib/runtime-list";
 import { heldSeen } from "../lib/seen-outbox";
+import { machineWithHub } from "../lib/mesh";
+import { sessionIdentity } from "../lib/session-identity";
 import { SESSIONS_LIST_FEATURE } from "../lib/session-list";
 import { personalHideDeps, personalOrder, personalSessions, removeAgentSession, useGoingIds } from "../lib/agents";
 import { BADGE_CLASS, CURRENT_ROW, type GoFn, GroupCount, type RegFn, ROW_TITLE_MIN, type RowMenuFn, Section } from "./SidebarParts";
@@ -249,7 +251,9 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
   // a desktop app's runtime that can be written to: its mark says where it is and the agent's mark which agent, so the
   // runtime's name at the end only repeats them (it stays in the tooltip); a read-only one still says why
   const sameAsMarks = source === "desktop" && s.source_kind === "runtime" && sessionCan(s, "send");
-  const tail = [sameAsMarks ? "" : sourceSubtitle(s), hint ?? (tab ? tabLabel(s) : "")].filter(Boolean).join(" · ");
+  const machine = useStore((state) => machineWithHub(given.machine_id, state.machines));
+  const identity = showState && !s.assistant ? sessionIdentity(s, machine, hint) : undefined;
+  const tail = [sameAsMarks ? "" : sourceSubtitle(s), identity ? "" : hint ?? (tab ? tabLabel(s) : "")].filter(Boolean).join(" · ");
   const preview = sessionPreview(s);
   // Settings › Appearance › show details on agent rows (#2430): a second line under an agent's title — folder · model · context · age
   const details = useAgentDetails();
@@ -271,7 +275,7 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
   // behind a prefix (a tab's name, a pane's agent) the title keeps room for a few characters: the prefix shrinks first
   const titleMin = prefix ? ROW_TITLE_MIN : "min-w-0";
   // with words at the end (where it came from, a hint) the title keeps its own width first: those words give way before it does
-  const titleFirst = tail ? "basis-auto" : undefined;
+  const titleFirst = tail && !identity ? "basis-auto" : undefined;
   // one ref per key, so letting go takes out only this row's entry (keyedRefs)
   const regRow = useMemo(() => reg(k), [reg, k]);
   // words left unsent in its box, once you are not in it (#5568): in place of what it asks or did
@@ -304,19 +308,28 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
       {prefix && <span className={prefixClass}>{prefix}</span>}
       {/* with the mark, the title sits in the column whether a second line shows or not: the same element through a
           workflow's start and end, so the mark does not fade in again */}
-      {ultra || detail.length > 0 || workflow || line || plan ? (
+      {identity || ultra || detail.length > 0 || workflow || line || plan ? (
         <span className={cx("flex flex-1 flex-col", titleMin, titleFirst)}>
           {ultra ? (
             <span className="flex min-w-0 items-center gap-1">
-              <span className={cx("min-w-0 truncate text-[13px]", active ? "font-medium text-ink" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
+              <span className={cx("line-clamp-2 break-words text-[13px]", titleMin, active ? "font-medium text-ink" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
                 {label ?? sessionTitle(s)}
               </span>
               <UltraMark size={10} />
             </span>
           ) : (
-            <span className={cx("truncate text-[13px]", active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
+            <span className={cx("line-clamp-2 break-words text-[13px]", titleMin, active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
               {label ?? sessionTitle(s)}
             </span>
+          )}
+          {identity && (
+            <>
+              <span data-session-identity className="flex min-w-0 items-start gap-1 text-[11px] leading-[1.6] text-ink-3">
+                {source && <SourceTag s={s} />}
+                <span className="min-w-0 break-words">{[identity.label, host, tail].filter(Boolean).join(" · ")}</span>
+              </span>
+              {identity.path && <span data-session-path className="line-clamp-2 break-all text-[11px] leading-[1.6] text-ink-3" title={s.cwd}>{identity.path}</span>}
+            </>
           )}
           {line && <SecondLine line={line} draft={!!draft} />}
           {plan && (
@@ -343,11 +356,11 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
           </span>}
         </span>
       ) : (
-        <span className={cx("flex-1 truncate text-[13px]", titleMin, titleFirst, active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && "font-medium text-ink")}>
+        <span className={cx("flex-1 line-clamp-2 break-words text-[13px]", titleMin, titleFirst, active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && "font-medium text-ink")}>
           {label ?? sessionTitle(s)}
         </span>
       )}
-      {host && <span className={cx("shrink-0 rounded bg-hover px-1 text-[10px] leading-4 text-ink-3", aside)}>{host}</span>}
+      {!identity && host && <span className={cx("shrink-0 rounded bg-hover px-1 text-[10px] leading-4 text-ink-3", aside)}>{host}</span>}
       {showTodoTag && s.todo && (
         <span
           className={cx("flex shrink-0 items-center justify-center rounded bg-hover px-1 py-0.5 text-ink-3", aside)}
@@ -357,9 +370,9 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
           <Icon name="todo" size={10} stroke={2} />
         </span>
       )}
-      {source && <SourceTag s={s} className={aside} />}
+      {!identity && source && <SourceTag s={s} className={aside} />}
       {/* the row's ⋯ takes the end on hover: what is there steps aside instead of showing half under it */}
-      {tail && <span className={cx("max-w-[72px] min-w-6 shrink-[20] truncate text-[11px] text-ink-3", aside)}>{tail}</span>}
+      {!identity && tail && <span className={cx("max-w-[72px] min-w-6 shrink-[20] truncate text-[11px] text-ink-3", aside)}>{tail}</span>}
       {!tail && (st === "offline" || !showState) && <span className={cx("shrink-0 text-[11px] text-ink-3", aside)}>{ago(s.updated_at)}</span>}
       {(s.pending_interactions ?? 0) > 0 && <span className={cx("flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-field px-1 text-[10px] font-semibold text-attention tabular-nums", aside)}>{s.pending_interactions}</span>}
     </a>

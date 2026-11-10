@@ -334,16 +334,15 @@ func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.It
 		if text == "" {
 			return nil
 		}
-		// Narration between tool calls ("commentary") reads like Claude's thinking blocks: part of the work, not
-		// the answer.
-		kind := proto.KindText
-		if it.Phase == "commentary" {
-			kind = proto.KindThinking
-		} else if t := withoutBotmuxSentinel(text); t != "" {
-			meta.LastText = t
+		// Commentary is user-facing text, not reasoning. Keep the last-answer metadata unchanged.
+		if it.Phase != "commentary" {
+			if t := withoutBotmuxSentinel(text); t != "" {
+				meta.LastText = t
+			}
 		}
-		a := mk(0, it.ID, "assistant", kind)
+		a := mk(0, it.ID, "assistant", proto.KindText)
 		a.Text = clip(text)
+		a.Narration = it.Phase == "commentary"
 		return []proto.Item{a}
 	case "Reasoning":
 		text := strings.TrimSpace(strings.Join(it.SummaryText, "\n\n"))

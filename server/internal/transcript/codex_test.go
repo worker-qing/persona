@@ -38,7 +38,7 @@ func TestCodexRollout(t *testing.T) {
 		got = append(got, it.Role+":"+it.Kind+":"+it.ToolName)
 	}
 	want := []string{
-		"user:text:", "assistant:thinking:",
+		"user:text:", "assistant:text:",
 		"assistant:tool_use:Bash", "user:tool_result:", "assistant:tool_use:Bash", "user:tool_result:",
 		"assistant:tool_use:Edit", "user:tool_result:", "assistant:tool_use:mcp__cua__js", "user:tool_result:",
 		"assistant:text:", "system:notice:",
@@ -105,7 +105,7 @@ func TestHistoryMutationRollout(t *testing.T) {
 		got = append(got, it.Role+":"+it.Kind+":"+it.ToolName+":"+it.Text)
 	}
 	want := []string{
-		"user:text::build the proxy", "assistant:thinking::Checking the repo first.",
+		"user:text::build the proxy", "assistant:text::Checking the repo first.",
 		"assistant:tool_use:Bash:", "user:tool_result::a\n", "assistant:text::Done: the proxy runs.",
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {

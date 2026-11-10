@@ -73,8 +73,8 @@ describe("where an agent was opened, as a mark at its row's end (#2526)", () => 
     expect(mark(render({ pane_id: "w1:p1" }, { endRoom: true }))).toBeUndefined();
     expect(link(render({ pane_id: "w1:p1" }, { endRoom: true }))).not.toMatch(/\n终端/);
   });
-  it("steps aside for the hover ⋯ like the rest of the row's end, and stays on the open row", () => {
-    expect(mark(render({ pane_id: "w1:p1" }))).toContain("group-hover/row:invisible");
+  it("stays visible in the identity line while the row menu is reachable", () => {
+    expect(mark(render({ pane_id: "w1:p1" }))).not.toContain("invisible");
     expect(mark(renderToStaticMarkup(<SessionRow {...rowProps} s={{ ...session, pane_id: "w1:p1" }} active />))).not.toContain("invisible");
   });
   it("tells terminal and desktop apart by shape too: a bare prompt, and a framed window", () => {
@@ -93,10 +93,12 @@ describe("where an agent was opened, as a mark at its row's end (#2526)", () => 
     // read-only: the end still says why
     expect(render({ ...paseo, capabilities: { read: true, send: false } })).toMatch(/>[^<]*Paseo[^<]*</);
   });
-  it("keeps the title's width first when words sit at the row's end", () => {
+  it("puts source information below a two-line title instead of squeezing it into the row's end", () => {
     const html = render({ space_kind: "codex_app", source_kind: "codex_history", agent_name: "Codex App" });
-    expect(html).toMatch(/<span class="[^"]*flex-1 truncate[^"]*basis-auto[^"]*">整理文档<\/span>/);
-    expect(html).toMatch(/<span class="[^"]*min-w-6 shrink-\[20\][^"]*">[^<]*Codex/);
+    expect(html).toMatch(/<span class="[^"]*line-clamp-2[^"]*">整理文档<\/span>/);
+    expect(html).toContain("data-session-identity");
+    expect(html).toContain("Codex");
+    expect(html).not.toContain("shrink-[20]");
     expect(render({ pane_id: "w1:p1" })).not.toContain("basis-auto"); // nothing at the end: as before
   });
 });
@@ -128,10 +130,13 @@ describe("an agent's row with 「Agent 行显示详情」 (#2430)", () => {
     expect(danger).toContain("text-orange");
     expect(danger).not.toContain("text-red");
   });
-  it("draws no second line for a session that says nothing, or for a conversation of the assistant", () => {
+  it("keeps the computer identity without inventing optional details or a missing path", () => {
     setAgentDetails(true);
     const plain = { ...session, cwd: "" };
-    expect(render(plain)).not.toContain("flex-col");
+    expect(render(plain)).toContain("data-session-identity");
+    expect(render(plain)).not.toContain("data-session-path");
+    expect(render(plain)).not.toContain("opus 5.5");
+    expect(render(detailed, { showState: false })).not.toContain("data-session-identity");
     expect(render(detailed, { showState: false })).not.toContain("opus 5.5");
   });
 });

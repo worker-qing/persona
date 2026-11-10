@@ -1914,6 +1914,16 @@ starts drawing outcomes must bump its item cache version: items cached from olde
 
 ### Folded work
 
+Codex `AgentMessage` records with `phase: commentary` are user-facing `kind: text` items with
+`narration: true`; `Reasoning` records remain `kind: thinking`. The flag does not change the original
+item id, text or sequence, and does not replace the session's last-answer metadata. Older clients
+can ignore the flag and render the item as ordinary text.
+
+With `fold_work`, superseded narration can join the execution summary. The latest assistant text
+of each exchange stays outside the fold, even when tools or reasoning follow it, or an interrupted
+turn has no final answer. A final answer supersedes that turn's narration. Opening the summary
+still returns the original narration in full; it is not replaced with a one-line thinking preview.
+
 The tool calls and thinking of a turn are normally folded into one line in the chat ("Tools 502 · Thinking 81"). But in one long Codex session, the page for the last two turns had 1412 items and 1.08 MB,
 with only 6 actual replies: on a weak network the top of the chat page kept spinning. When a request carries `fold_work` (HTTP `fold_work=1`, `fold_work: true` when subscribing), pages read backward from the end
 (`turns` / `before_seq` / the last two turns resent on subscribe) replace each run of consecutive work (paired tool_use + tool_result, with the tool's images, and thinking)
@@ -1941,7 +1951,7 @@ with one item of `kind: fold` (`transcript.FoldWork`):
   It contains only the original `id`, `seq`, `ts`, `role`, `kind`, `text` and optional `full_size`. Text is limited to 512 Unicode characters, including an ellipsis when clipped;
   `full_size` preserves the original byte count (including any earlier clipping). It carries no tool, image or other payload, and is omitted when there is no thought with words.
   The original item remains inside the fold: counts, range and expansion are unchanged. Clients that do not use this preview ignore it.
-- Not folded: user messages, replies (text), notifications, recaps; a tool_use whose result is not on this page (still running) and a tool_result whose tool_use is not on this page
+- Not folded: user messages, replies (text other than superseded narration), notifications, recaps; a tool_use whose result is not on this page (still running) and a tool_result whose tool_use is not on this page
   (the App has to pair them with the other half that comes later / came earlier); short runs under 3 items and under 4 KB (expanding costs another round trip; not worth it).
 - When the App expands a work row it fetches the run with `from_seq=<fold.seq>&through_seq=<fold.through_seq>` (about 1000 items per page; on `more`, continue from the last item's seq + 1),
   merges it in and drops the fold. When a fold is merged in, local tool / thinking items within its range (by seq + block index) are replaced by it.

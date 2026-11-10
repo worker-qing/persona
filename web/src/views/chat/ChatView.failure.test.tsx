@@ -256,11 +256,40 @@ describe("accepted messages waiting for their transcript copy (#2792)", () => {
   });
   afterEach(() => { transcript.items = []; });
 
+  it("keeps acceptance visible through a long active turn without retrying the message", async () => {
+    const original = captured.session;
+    captured.session = { ...original!, status: "working", state: "working" };
+    let restoreClock = () => {};
+    try {
+      act(() => root.render(<ChatView mid="hub" sid="c1" />));
+      await flush();
+      await act(async () => void (await captured.onSend!({ text: "Keep this request until the current work is ready.", images: [] })));
+      const later = Date.now() + 3 * SENT_GRACE_MS;
+      const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+      restoreClock = () => clock.mockRestore();
+      transcript.items = [{ id: "compact", seq: 1, role: "system", kind: "notice", text: "Context compacted." }];
+      act(() => root.render(<ChatView mid="hub" sid="c1" />));
+      await flush();
+      expect(host.querySelector('[data-user-bubble][data-send-state="sent"]')).not.toBeNull();
+      expect(host.textContent).toContain(t("chat-segmentview.received"));
+      expect(host.textContent).not.toContain(t("chat-segmentview.sending"));
+      expect(host.textContent).not.toContain(t("chat-chatview.delivering"));
+      expect(host.querySelector("[data-outbox] [role=alert]")).toBeNull();
+      expect(bodies).toHaveLength(1);
+    } finally {
+      restoreClock();
+      captured.session = original;
+    }
+  });
+
   it.each(["reload", "navigation"])("keeps one pending copy after %s without sending again, then replaces it with the echo", async (reopen) => {
     act(() => root.render(<ChatView mid="hub" sid="c1" />));
     await flush();
     await act(async () => void (await captured.onSend!({ text: "Is the museum open on Sunday?", images: [] })));
     await flush();
+    expect(host.querySelector("[data-user-bubble]")?.getAttribute("data-send-state")).toBe("sent");
+    expect(host.textContent).toContain(t("chat-segmentview.received"));
+    expect(host.textContent).not.toContain(t("chat-segmentview.sending"));
     const id = bodies[0].client_msg_id;
     const key = `outbox-msg:hub/c1/${id}`;
     expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ id, state: "sent" });
@@ -276,6 +305,7 @@ describe("accepted messages waiting for their transcript copy (#2792)", () => {
     await flush();
     expect(host.querySelectorAll("[data-user-bubble]")).toHaveLength(1);
     expect(host.querySelector(`[data-outbox="${id}"] [data-user-bubble]`)?.getAttribute("data-send-state")).toBe("sent");
+    expect(host.textContent).toContain(t("chat-segmentview.received"));
     expect(host.querySelector("[data-outbox] [role=alert]")).toBeNull();
     expect([...host.querySelectorAll("[data-outbox] button")].some((b) => b.textContent === t("chat-outboxbubbles.retry"))).toBe(false);
     expect(bodies).toHaveLength(1);

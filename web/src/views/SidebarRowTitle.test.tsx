@@ -36,4 +36,16 @@ describe("an agent row's title behind a prefix", () => {
     expect(renderToStaticMarkup(<SessionRow {...props} prefix="release" />)).toContain('data-source="terminal"');
     expect(renderToStaticMarkup(<SessionRow {...props} prefix="release" endRoom />)).not.toContain("data-source=");
   });
+
+  it("gives the title two lines and keeps the computer, named tab and directory out of its width", () => {
+    const html = renderToStaticMarkup(<SessionRow {...props} s={{ ...s, cwd: "/code/website/client", slot_name: "Release review", space_name: "Website" }} hint="Laptop · Website" />);
+    expect(titleOf(html)).toContain("line-clamp-2");
+    expect(titleOf(html)).not.toContain("truncate");
+    expect(html).toContain("data-session-identity");
+    expect(html).toContain("Release review");
+    expect(html).toContain("Laptop");
+    expect(html).toContain("data-session-path");
+    expect(html).toContain("/code/website/client");
+    expect(html).not.toContain("max-w-[72px]");
+  });
 });

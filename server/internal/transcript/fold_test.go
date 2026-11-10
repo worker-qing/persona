@@ -51,7 +51,7 @@ func longCodexRollout(t testing.TB, commands, notes, replies int) string {
 }
 
 func foldable(it proto.Item) bool {
-	return it.Kind == proto.KindToolUse || it.Kind == proto.KindToolResult || it.Kind == proto.KindThinking ||
+	return it.Kind == proto.KindToolUse || it.Kind == proto.KindToolResult || it.Kind == proto.KindThinking || it.Narration ||
 		(it.Kind == proto.KindImage && it.ToolUseID != "")
 }
 
