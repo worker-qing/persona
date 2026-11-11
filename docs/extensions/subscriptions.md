@@ -82,6 +82,9 @@ A dry run returns up to three items and the first item's leaf paths with example
 Manager migration `0482_subscriptions.sql`:
 
 - `subscriptions`: one row per subscription. The settings, recipe, run state and last 20 runs are a `json` document, with `revision` (a change is written only at the revision the client saw) and `lease_until` beside it.
+  A run started at an older revision may keep its cursor, history and deduplication results, but cannot replace
+  the next-run time or guarded run state chosen by a newer settings update. Enabling, disabling, rescheduling
+  or replacing the recipe while a run is in flight therefore preserves the updated schedule.
 - `subscription_seen`: dedup keys per subscription, the newest 5000 and none older than 400 days.
 - `subscription_items`: new items waiting for the destinations (#2039), bodies cut to 8000 characters.
 

@@ -36,7 +36,7 @@ type Store interface {
 }
 
 // RunCommit is what a run writes at once: the new dedup keys and items, the cursor and history, and the state. The
-// state (RunState, Error, FailCount, FailingSince, PausedUntil, ShapeMisses, ToolFingerprint) is written only while
+// state (NextRunAt, RunState, Error, FailCount, FailingSince, PausedUntil, ShapeMisses, ToolFingerprint) is written only while
 // the subscription is still at Revision: a run that started before the user changed the recipe does not undo the
 // change. The run's lease is released.
 type RunCommit struct {
@@ -202,13 +202,14 @@ func (m *MemStore) SeenCount(id string) int {
 	return len(m.seen[id])
 }
 
-// applyRun copies a run's outcome onto cur: the cursor, history and timings always, the state only when withState.
+// applyRun copies a run's outcome onto cur: the cursor and history always, the schedule and state only when withState.
 func applyRun(cur *Subscription, out Subscription, withState bool) {
 	cur.SinceAt, cur.SnapshotHash, cur.Runs = out.SinceAt, out.SnapshotHash, out.Runs
 	cur.LastRunAt, cur.LastOKAt, cur.LastNewCount = out.LastRunAt, out.LastOKAt, out.LastNewCount
-	cur.WeakDedup, cur.Shape, cur.NextRunAt = out.WeakDedup, out.Shape, out.NextRunAt
+	cur.WeakDedup, cur.Shape = out.WeakDedup, out.Shape
 	cur.SourceName, cur.Icon, cur.Service, cur.SourceMin, cur.MaxCallsPerHour = out.SourceName, out.Icon, out.Service, out.SourceMin, out.MaxCallsPerHour
 	if withState {
+		cur.NextRunAt = out.NextRunAt
 		cur.RunState, cur.Error, cur.FailCount, cur.FailingSince = out.RunState, out.Error, out.FailCount, out.FailingSince
 		cur.PausedUntil, cur.ShapeMisses, cur.ToolFingerprint = out.PausedUntil, out.ShapeMisses, out.ToolFingerprint
 	}
