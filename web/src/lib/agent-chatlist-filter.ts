@@ -450,11 +450,7 @@ export function compileSearchAsCode(
   if (machineTargets.size > 0) {
     const list = [...machineTargets];
     clauses.push(list.length === 1 ? `s.machine === ${JSON.stringify(list[0])}` : `${JSON.stringify(list)}.includes(s.machine)`);
-    predicates.push((s, ctx) => {
-      const mid = s.machine_id.toLowerCase();
-      const mname = machineWithHub(s.machine_id, ctx.machines).toLowerCase();
-      return list.some((target) => mid.includes(target) || mname.includes(target));
-    });
+    predicates.push(fieldContains("machine", list));
   }
 
   // 2. Detect projects from filter pills, operators, or natural language mentions
@@ -468,11 +464,7 @@ export function compileSearchAsCode(
   if (projectTargets.size > 0) {
     const list = [...projectTargets];
     clauses.push(list.length === 1 ? `s.project === ${JSON.stringify(list[0])}` : `/${list.map(escapePlanRegex).join("|")}/i.test(s.project)`);
-    predicates.push((s) => {
-      const proj = sessionProjectName(s).toLowerCase();
-      const cwd = (s.cwd || "").toLowerCase();
-      return list.some((target) => proj.includes(target) || cwd.includes(target));
-    });
+    predicates.push(fieldContains("project", list));
   }
 
   // 3. Detect harnesses from filter pills, operators, or natural language mentions
@@ -483,11 +475,7 @@ export function compileSearchAsCode(
   if (harnessTargets.size > 0) {
     const list = [...harnessTargets];
     clauses.push(list.length === 1 ? `s.harness === ${JSON.stringify(list[0])}` : `${JSON.stringify(list)}.includes(s.harness)`);
-    predicates.push((s) => {
-      const hid = sessionHarnessId(s).toLowerCase();
-      const hlabel = sessionHarnessLabel(s).toLowerCase();
-      return list.some((target) => hid.includes(target) || hlabel.includes(target));
-    });
+    predicates.push(fieldContains("harness", list));
   }
 
   // 4. Detect models from filter pills, operators, or natural language mentions
@@ -498,10 +486,7 @@ export function compileSearchAsCode(
   if (modelTargets.size > 0) {
     const list = [...modelTargets];
     clauses.push(`/${list.map(escapePlanRegex).join("|")}/i.test(s.model)`);
-    predicates.push((s) => {
-      const mod = `${sessionModelId(s)} ${s.model ?? ""} ${s.launcher ?? ""}`.toLowerCase();
-      return list.some((target) => mod.includes(target));
-    });
+    predicates.push(fieldContains("model", list));
   }
 
   // 5. Pinned intent
@@ -605,6 +590,15 @@ function planField(s: Session, ctx: EvalContext, field: string): string[] {
     case "title": return [sessionTitle(s)];
     default: return [];
   }
+}
+
+/** Generated substring filters and edited plans share the same session metadata extraction. */
+function fieldContains(field: string, targets: string[]): SearchPlan["predicates"][number] {
+  return (s, ctx) => {
+    const values = planField(s, ctx, field);
+    const texts = field === "model" ? [values.join(" ")] : values;
+    return texts.some((value) => targets.some((target) => value.toLowerCase().includes(target)));
+  };
 }
 
 /** Parse the displayed conjunction grammar completely. Never eval code or ignore an unrecognized clause. */

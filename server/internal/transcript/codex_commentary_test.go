@@ -35,6 +35,34 @@ func TestCodexCommentaryRemainsUserFacingText(t *testing.T) {
 	}
 }
 
+func TestCodexNarrationPreservesTurnAnswerAggregation(t *testing.T) {
+	meta := &Meta{Codex: true, LastText: "Previous answer."}
+	ParseLine(1, []byte(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"first"}}`), meta)
+	message := func(seq int, id, phase, text string) proto.Item {
+		t.Helper()
+		line := `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":` +
+			quote(id) + `,"phase":` + quote(phase) + `,"content":[{"type":"Text","text":` + quote(text) + `}]}}}`
+		return only(t, ParseLine(seq, []byte(line), meta))
+	}
+	note := message(2, "note", "commentary", "Checking the result.")
+	if note.Kind != proto.KindText || !note.Narration || meta.TurnAnswer() != "Previous answer." {
+		t.Fatalf("commentary changed the answer or stopped being visible: %+v answer=%q", note, meta.TurnAnswer())
+	}
+	message(3, "report", "final", "The first check passed.")
+	message(4, "closing", "final", "All checks completed.")
+	message(5, "note-after", "commentary", "Preparing the next step.")
+	want := "The first check passed.\n\nAll checks completed."
+	if meta.TurnAnswer() != want || meta.LastText != "All checks completed." {
+		t.Fatalf("lost upstream answer aggregation: answer=%q last=%q", meta.TurnAnswer(), meta.LastText)
+	}
+	// The upstream turn boundary clears both answer parts and the item-id deduplication set.
+	ParseLine(6, []byte(`{"type":"event_msg","payload":{"type":"task_started","turn_id":"second"}}`), meta)
+	message(7, "report", "final", "The next turn's answer.")
+	if meta.TurnAnswer() != "The next turn's answer." {
+		t.Fatalf("previous turn leaked into the answer: %q", meta.TurnAnswer())
+	}
+}
+
 func TestFoldNarrationKeepsLatestTextPerExchange(t *testing.T) {
 	narration := func(id string, seq int) proto.Item {
 		return proto.Item{ID: id, Seq: seq, Role: "assistant", Kind: proto.KindText, Narration: true, Text: "**Progress:** " + id}

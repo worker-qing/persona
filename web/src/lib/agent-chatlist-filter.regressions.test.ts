@@ -43,6 +43,14 @@ describe("literal search without Search as Code", () => {
     registerSearchAsCodeProvider({ id: "test", compile: () => { throw new Error("unexpected compile"); } });
     expect(search([session("a")], { query: "error", scope: "title" }).sessions).toHaveLength(1);
   });
+
+  it.each(["machine:LAP", "project:/TEST", "harness:CODE", "model:CUSTOM", "model:WRAPPER"])(
+    "keeps generated substring matching across metadata aliases: %s",
+    (query) => {
+      const row = session("a", { model: "custom-model", launcher: "wrapper" });
+      expect(search([row], { query }).sessions).toEqual([row]);
+    },
+  );
 });
 
 describe("edited search plans", () => {
