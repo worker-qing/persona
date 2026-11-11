@@ -22,6 +22,7 @@
   "chat_list_view": "チャット一覧",
   "search_as_code": "コード検索",
   "search_plan": "検索プラン",
+  "invalid_plan": "検索プランに誤り、または未対応の構文があります。修正するまでセッションは表示されません。",
   "role_user": "ユーザー：",
   "role_agent": "Agent：",
   "role_error": "エラー：",

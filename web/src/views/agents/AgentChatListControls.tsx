@@ -38,7 +38,7 @@ import { CURRENT_ROW, type GoFn, type RegFn, type RowMenuFn } from "../SidebarPa
 
 export function AgentDimensionFilterBar({
   filters,
-  onChange,
+  onChange: updateFilters,
   facets,
   plan,
   chatList,
@@ -57,6 +57,8 @@ export function AgentDimensionFilterBar({
   const modelMenu = useMenu();
   const machineMenu = useMenu();
   const [editingPlan, setEditingPlan] = useState(false);
+  // Query and facet edits return to a generated plan; only the plan editor owns custom code.
+  const onChange = (next: AgentDimensionFilters) => updateFilters({ ...next, customPlanCode: undefined });
 
   const activeScope = SEARCH_SCOPES.find((s) => s.key === filters.scope) ?? SEARCH_SCOPES[0];
   const hasActive = hasActiveDimensionFilters(filters);
@@ -371,10 +373,10 @@ export function AgentDimensionFilterBar({
       )}
 
       {/* Row 4: Search as Code inspectable / editable code plan bar (Perplexity "Search as Code Generation") */}
-      {(filters.searchAsCode || Boolean(filters.customPlanCode)) && (
+      {filters.searchAsCode && (
         <div
           data-testid="search-as-code-plan"
-          className="flex items-center gap-1.5 rounded-control bg-inset px-2 py-1 text-[11px] shadow-hairline ring-1 ring-accent/25"
+          className="flex flex-wrap items-center gap-1.5 rounded-control bg-inset px-2 py-1 text-[11px] shadow-hairline ring-1 ring-accent/25"
         >
           <Icon name="code" size={12} stroke={2} className="shrink-0 text-accent-ink" />
           <span className="shrink-0 font-medium text-accent-ink">{t("lib-agent-filter.search_plan")}:</span>
@@ -382,8 +384,9 @@ export function AgentDimensionFilterBar({
             <input
               autoFocus
               data-testid="search-as-code-input"
+              aria-invalid={plan.invalid || undefined}
               value={filters.customPlanCode ?? plan.code}
-              onChange={(e) => onChange({ ...filters, customPlanCode: e.target.value })}
+              onChange={(e) => updateFilters({ ...filters, customPlanCode: e.target.value })}
               onBlur={() => setEditingPlan(false)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === "Escape") setEditingPlan(false);
@@ -400,6 +403,7 @@ export function AgentDimensionFilterBar({
               {plan.code}
             </button>
           )}
+          {plan.invalid && <span role="alert" className="w-full text-red">{t("lib-agent-filter.invalid_plan")}</span>}
         </div>
       )}
     </div>

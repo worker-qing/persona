@@ -87,6 +87,46 @@ afterEach(() => {
 });
 
 describe("Agents Tab Chat-List & Composable Filter Bar", () => {
+  it("replaces an edited plan, shows invalid syntax, and regenerates on ordinary filter edits", async () => {
+    Object.assign(getState(), {
+      loaded: true, machines, sessions: { gcp: [sessions[0]], mac: [sessions[1]] },
+      pins: { spaces: [], sessions: ["mac/s2"] }, todosLoaded: true,
+    });
+    await act(async () => root.render(<AgentsList route={{ name: "agent-list" }} onNewAgent={() => {}} />));
+    const input = host.querySelector<HTMLInputElement>('[data-testid="agent-dimension-filter-bar"] input')!;
+    const type = async (field: HTMLInputElement, value: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, value);
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const visible = () => [...host.querySelectorAll('[data-testid="agent-chatlist-row"]')].map((r) => r.getAttribute("data-session-id"));
+    await type(input, "machine:gcp");
+    expect(visible()).toEqual(["s1"]);
+    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="agent-search-as-code-toggle"]')!;
+    await act(async () => toggle.click());
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="search-as-code-plan"] button')!.click());
+    const editor = host.querySelector<HTMLInputElement>('[data-testid="search-as-code-input"]')!;
+    await type(editor, 'session.where(s => s.machine === "mac")');
+    expect(visible()).toEqual(["s2"]);
+    await type(editor, "session.where(s => unsupported())");
+    expect(editor.getAttribute("aria-invalid")).toBe("true");
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    expect(visible()).toEqual([]);
+    await type(editor, "session.where(s => true)");
+    expect(visible()).toHaveLength(2);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="filter-pill-pinned"]')!.click());
+    // The query and pin filter now own the generated plan: gcp has no pinned session.
+    expect(visible()).toEqual([]);
+    expect(host.querySelector('[data-testid="search-as-code-plan"]')!.textContent +
+      (host.querySelector<HTMLInputElement>('[data-testid="search-as-code-input"]')?.value ?? "")).toContain("s.isPinned");
+    await act(async () => toggle.click());
+    expect(host.querySelector('[data-testid="search-as-code-plan"]')).toBeNull();
+    await type(input, "machine:mac");
+    expect(visible()).toEqual(["s2"]);
+  });
+
   it("renders IM Chat-List rows with pinned sessions at the top, metadata chips, and Search as Code", async () => {
     Object.assign(getState(), {
       loaded: true,

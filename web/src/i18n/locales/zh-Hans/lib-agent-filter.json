@@ -22,6 +22,7 @@
   "chat_list_view": "对话列表",
   "search_as_code": "代码检索",
   "search_plan": "检索表达式",
+  "invalid_plan": "搜索计划有误或包含不支持的语法，修正后才会显示匹配会话。",
   "role_user": "用户：",
   "role_agent": "Agent：",
   "role_error": "报错：",

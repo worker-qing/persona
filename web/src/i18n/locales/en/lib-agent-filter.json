@@ -22,6 +22,7 @@
   "chat_list_view": "Chat list",
   "search_as_code": "Search as Code",
   "search_plan": "Search plan",
+  "invalid_plan": "Invalid or unsupported search plan. No sessions match until it is corrected.",
   "role_user": "User:",
   "role_agent": "Agent:",
   "role_error": "Error:",

@@ -200,7 +200,7 @@ describe("Search as Code compilation, evaluation, and provider hook", () => {
     expect(plan.code).toContain('s.project === "persona"');
     expect(plan.code).toContain("s.hasErrors");
     expect(plan.code).toContain('s.state === "working"');
-    expect(plan.code).toContain('s.updatedWithin("24h")');
+    expect(plan.code).toContain('s.updatedWithin("48h")');
     expect(sessions.map((s) => s.session_id)).toEqual(["s-pinned"]);
   });
 

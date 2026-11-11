@@ -18,7 +18,7 @@ export const SEARCH_SCOPES: { key: SearchScope; labelKey: string }[] = [
   { key: "errors", labelKey: "lib-agent-filter.scope_errors" },
 ];
 
-export type SinceWindow = "24h" | "7d" | "30d";
+export type SinceWindow = "24h" | "48h" | "7d" | "30d";
 
 export interface AgentDimensionFilters {
   query: string;
@@ -82,6 +82,7 @@ export interface EvidenceSnippet {
 export interface SearchPlan {
   code: string;
   predicates: ((s: Session, ctx: EvalContext) => boolean)[];
+  invalid?: boolean;
   ranker?: (a: Session, b: Session, ctx: EvalContext) => number;
   highlightTerms: string[];
   source: "builtin" | "provider";
@@ -223,13 +224,15 @@ export function buildAgentFacets(sessions: readonly Session[], machines: readonl
 
 const SINCE_MS: Record<SinceWindow, number> = {
   "24h": 24 * 3600_000,
+  "48h": 48 * 3600_000,
   "7d": 7 * 24 * 3600_000,
   "30d": 30 * 24 * 3600_000,
 };
 
 function parseSinceToken(raw: string): SinceWindow | undefined {
   const v = raw.trim().toLowerCase();
-  if (v === "24h" || v === "1d" || v === "2d" || v === "48h") return "24h";
+  if (v === "24h" || v === "1d") return "24h";
+  if (v === "2d" || v === "48h") return "48h";
   if (v === "7d" || v === "1w") return "7d";
   if (v === "30d" || v === "1m") return "30d";
   return undefined;
@@ -418,13 +421,19 @@ export function compileSearchAsCode(
   filters: AgentDimensionFilters,
   facets: AgentFacetCounts,
 ): SearchPlan {
-  if (activeProvider && !filters.customPlanCode) {
+  if (filters.searchAsCode && filters.customPlanCode !== undefined) {
+    const code = filters.customPlanCode.trim();
+    const predicates = compileCustomPlanCode(code);
+    return { code, predicates: predicates ?? [() => false], invalid: predicates === null, highlightTerms: [], source: "builtin" };
+  }
+  if (filters.searchAsCode && activeProvider) {
     const extPlan = activeProvider.compile(rawQuery, facets);
     if (extPlan) return extPlan;
   }
 
   const parsed = parseSearchQuery(rawQuery);
-  const lowQ = rawQuery.toLowerCase();
+  const lowQ = filters.searchAsCode ? rawQuery.toLowerCase() : "";
+  const intentTerms = filters.searchAsCode ? parsed.terms : [];
   const clauses: string[] = [];
   const predicates: ((s: Session, ctx: EvalContext) => boolean)[] = [];
   const highlightTerms = [...parsed.terms];
@@ -434,7 +443,7 @@ export function compileSearchAsCode(
   for (const m of facets.machines) {
     const mid = m.id.toLowerCase();
     const mlabel = m.label.toLowerCase();
-    if (parsed.terms.some((w) => w.toLowerCase() === mid || w.toLowerCase() === mlabel)) {
+    if (intentTerms.some((w) => w.toLowerCase() === mid || w.toLowerCase() === mlabel)) {
       machineTargets.add(mid);
     }
   }
@@ -452,13 +461,13 @@ export function compileSearchAsCode(
   const projectTargets = new Set<string>([...filters.projects.map((p) => p.toLowerCase()), ...parsed.projects]);
   for (const p of facets.projects) {
     const pid = p.id.toLowerCase();
-    if (pid.length >= 2 && parsed.terms.some((w) => w.toLowerCase() === pid)) {
+    if (pid.length >= 2 && intentTerms.some((w) => w.toLowerCase() === pid)) {
       projectTargets.add(pid);
     }
   }
   if (projectTargets.size > 0) {
     const list = [...projectTargets];
-    clauses.push(list.length === 1 ? `s.project === ${JSON.stringify(list[0])}` : `/${list.join("|")}/i.test(s.project)`);
+    clauses.push(list.length === 1 ? `s.project === ${JSON.stringify(list[0])}` : `/${list.map(escapePlanRegex).join("|")}/i.test(s.project)`);
     predicates.push((s) => {
       const proj = sessionProjectName(s).toLowerCase();
       const cwd = (s.cwd || "").toLowerCase();
@@ -469,7 +478,7 @@ export function compileSearchAsCode(
   // 3. Detect harnesses from filter pills, operators, or natural language mentions
   const harnessTargets = new Set<string>([...filters.harnesses.map((h) => h.toLowerCase()), ...parsed.harnesses]);
   for (const h of ["claude", "codex", "opencode", "pi", "gemini", "cursor", "trae"]) {
-    if (parsed.terms.some((w) => w.toLowerCase() === h)) harnessTargets.add(h);
+    if (intentTerms.some((w) => w.toLowerCase() === h)) harnessTargets.add(h);
   }
   if (harnessTargets.size > 0) {
     const list = [...harnessTargets];
@@ -484,11 +493,11 @@ export function compileSearchAsCode(
   // 4. Detect models from filter pills, operators, or natural language mentions
   const modelTargets = new Set<string>([...filters.models.map((m) => m.toLowerCase()), ...parsed.models]);
   for (const m of ["opus", "sonnet", "haiku", "fable", "argon", "gpt-5", "o3"]) {
-    if (parsed.terms.some((w) => w.toLowerCase().includes(m))) modelTargets.add(m);
+    if (intentTerms.some((w) => w.toLowerCase().includes(m))) modelTargets.add(m);
   }
   if (modelTargets.size > 0) {
     const list = [...modelTargets];
-    clauses.push(`/${list.join("|")}/i.test(s.model)`);
+    clauses.push(`/${list.map(escapePlanRegex).join("|")}/i.test(s.model)`);
     predicates.push((s) => {
       const mod = `${sessionModelId(s)} ${s.model ?? ""} ${s.launcher ?? ""}`.toLowerCase();
       return list.some((target) => mod.includes(target));
@@ -526,7 +535,8 @@ export function compileSearchAsCode(
   // 8. Time window intent (`since:24h` or natural language "最近两天" / "今天" / "本周")
   let sinceWindow: SinceWindow | undefined = filters.since ?? parsed.since;
   if (!sinceWindow) {
-    if (/(?:最近一天|今天|24小时|24h|最近两天|两天内|48h|yesterday|today)/i.test(lowQ)) sinceWindow = "24h";
+    if (/(?:最近两天|两天内|48h)/i.test(lowQ)) sinceWindow = "48h";
+    else if (/(?:最近一天|今天|24小时|24h|yesterday|today)/i.test(lowQ)) sinceWindow = "24h";
     else if (/(?:最近一周|本周|七天|7天|7d|past week)/i.test(lowQ)) sinceWindow = "7d";
     else if (/(?:最近一个月|30天|30d|past month)/i.test(lowQ)) sinceWindow = "30d";
   }
@@ -556,6 +566,8 @@ export function compileSearchAsCode(
     "running",
     "working",
     "unread",
+    "24h",
+    "48h",
   ]);
   const residualTerms = parsed.terms.filter((w) => {
     if (!filters.searchAsCode) return true;
@@ -571,50 +583,88 @@ export function compileSearchAsCode(
   }
 
   const expr = clauses.length > 0 ? clauses.join(" && ") : "true";
-  const defaultCode = `session.where(s => ${expr})`;
-  const finalCode = filters.customPlanCode?.trim() || defaultCode;
-
-  // If the user edited the Search Plan code directly, also honor custom `/regex/i.test(s.<field>)` or `s.<field> === "..."`
-  if (filters.customPlanCode?.trim() && filters.customPlanCode.trim() !== defaultCode) {
-    const custom = filters.customPlanCode.trim();
-    predicates.push((s, ctx) => evaluateCustomPlanCode(custom, s, ctx));
-  }
-
   return {
-    code: finalCode,
+    code: `session.where(s => ${expr})`,
     predicates,
     highlightTerms: residualTerms.length > 0 ? residualTerms : highlightTerms,
     source: "builtin",
   };
 }
 
-function evaluateCustomPlanCode(code: string, s: Session, ctx: EvalContext): boolean {
-  const record: Record<string, string | boolean> = {
-    machine: s.machine_id.toLowerCase(),
-    project: sessionProjectName(s).toLowerCase(),
-    harness: sessionHarnessId(s).toLowerCase(),
-    model: sessionModelId(s).toLowerCase(),
-    state: stateOf(s),
-    title: sessionTitle(s).toLowerCase(),
-    isPinned: isPinned(s, ctx.pins),
-    hasErrors: sessionHasError(s, ctx.interactions),
-  };
-  for (const m of code.matchAll(/s\.(machine|project|harness|model|state|title)\s*===\s*["']([^"']+)["']/g)) {
-    const field = m[1];
-    const target = m[2].toLowerCase();
-    if (!String(record[field] ?? "").includes(target)) return false;
+function escapePlanRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+
+function planField(s: Session, ctx: EvalContext, field: string): string[] {
+  switch (field) {
+    case "machine": return [s.machine_id, machineWithHub(s.machine_id, ctx.machines)];
+    case "project": return [sessionProjectName(s), s.cwd ?? ""];
+    case "harness": return [sessionHarnessId(s), sessionHarnessLabel(s)];
+    case "model": return [sessionModelId(s), s.model ?? "", s.launcher ?? ""];
+    case "state": return [stateOf(s)];
+    case "title": return [sessionTitle(s)];
+    default: return [];
   }
-  for (const m of code.matchAll(/\/([^/]+)\/[a-z]*\.test\(s\.(machine|project|harness|model|title)\)/g)) {
-    try {
-      const re = new RegExp(m[1], "i");
-      if (!re.test(String(record[m[2]] ?? ""))) return false;
-    } catch {
-      // ignore invalid user regex while typing
+}
+
+/** Parse the displayed conjunction grammar completely. Never eval code or ignore an unrecognized clause. */
+function compileCustomPlanCode(code: string): SearchPlan["predicates"] | null {
+  const body = /^session\.where\(\s*s\s*=>\s*([\s\S]+)\)$/.exec(code);
+  if (!body) return null;
+  let rest = body[1].trim();
+  const predicates: SearchPlan["predicates"] = [];
+  const quoted = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`;
+  const field = "(machine|project|harness|model|state|title)";
+  const equality = new RegExp(`^s\\.${field}\\s*===\\s*(${quoted})`);
+  const membership = new RegExp(`^(\\[\\s*(?:${quoted}(?:\\s*,\\s*${quoted})*)?\\s*\\])\\.includes\\(s\\.${field}\\)`);
+  const regex = new RegExp(String.raw`^\/((?:\\.|[^/\\])+)\/(i?)\.test\(s\.` + field + "\\)");
+  const within = new RegExp(`^s\\.updatedWithin\\((${quoted})\\)`);
+  const matches = new RegExp(`^s\\.matches\\((${quoted})\\s*,\\s*(${quoted})\\)`);
+  const stringValue = (value: string): string => JSON.parse(value.startsWith('"') ? value :
+    `"${value.slice(1, -1).replace(/\\'|\\.|"/g, (part) => part === "\\'" ? "'" : part === '"' ? '\\"' : part)}"`);
+  try {
+    while (rest) {
+      let m: RegExpExecArray | null;
+      if ((m = equality.exec(rest))) {
+        const key = m[1], value = stringValue(m[2]).toLowerCase();
+        predicates.push((s, ctx) => planField(s, ctx, key).some((v) => v.toLowerCase() === value));
+      } else if ((m = membership.exec(rest))) {
+        const values = [...m[1].matchAll(new RegExp(quoted, "g"))].map((v) => stringValue(v[0]).toLowerCase());
+        const key = m[2];
+        predicates.push((s, ctx) => planField(s, ctx, key).some((v) => values.includes(v.toLowerCase())));
+      } else if ((m = regex.exec(rest))) {
+        const pattern = new RegExp(m[1], m[2]), key = m[3];
+        predicates.push((s, ctx) => planField(s, ctx, key).some((v) => pattern.test(v)));
+      } else if ((m = within.exec(rest))) {
+        const window = parseSinceToken(stringValue(m[1]));
+        if (!window) return null;
+        predicates.push((s, ctx) => {
+          const ts = Date.parse(s.updated_at ?? s.state_since ?? "");
+          return Number.isFinite(ts) && ctx.now - ts <= SINCE_MS[window];
+        });
+      } else if ((m = matches.exec(rest))) {
+        const terms = stringValue(m[1]).trim().split(/\s+/).filter(Boolean);
+        const scope = stringValue(m[2]) as SearchScope;
+        if (!SEARCH_SCOPES.some((s) => s.key === scope)) return null;
+        predicates.push((s, ctx) => matchesSearchScope(s, terms, scope, ctx));
+      } else if ((m = /^(!?)s\.(isPinned|hasErrors)/.exec(rest))) {
+        const negate = m[1] === "!", key = m[2];
+        predicates.push((s, ctx) => (key === "isPinned" ? isPinned(s, ctx.pins) : sessionHasError(s, ctx.interactions)) !== negate);
+      } else if ((m = /^(true|false)/.exec(rest))) {
+        const value = m[1] === "true";
+        predicates.push(() => value);
+      } else {
+        return null;
+      }
+      rest = rest.slice(m[0].length).trim();
+      if (!rest) return predicates;
+      if (!rest.startsWith("&&")) return null;
+      rest = rest.slice(2).trim();
     }
+  } catch {
+    return null;
   }
-  if (/\bs\.isPinned\b/.test(code) && !record.isPinned) return false;
-  if (/\bs\.hasErrors\b/.test(code) && !record.hasErrors) return false;
-  return true;
+  return null;
 }
 
 /** Whether any dimension filter, search query, scope, or Search-as-Code mode is currently active. */
@@ -629,7 +679,7 @@ export function hasActiveDimensionFilters(f: AgentDimensionFilters): boolean {
       f.pinnedOnly ||
       f.since ||
       f.searchAsCode ||
-      f.customPlanCode?.trim(),
+      (f.searchAsCode && f.customPlanCode !== undefined),
   );
 }
 
