@@ -24,6 +24,13 @@ func (s *Service) taskNotice(ctx context.Context, t Todo, machine, state, ask, t
 		s.quietNotify(ctx, t, machine, state, ask, text)
 		return
 	}
+	if state == "failed" && !t.Quiet && t.Origin != "" && !s.isMain(ctx, t.Origin) && !s.isLeader(ctx, t.Origin) &&
+		!s.isLeaderRef(t.Supervision.Supervisor) {
+		// A side conversation's task, whoever supervises it now: the user still gets the failure push they got before
+		// the task had a ledger (#5081), and the supervisor its signal. A leader conversation's own task, and a
+		// worker's, stay their supervisor's business.
+		s.notifyTaskFailed(ctx, t, machine, text)
+	}
 	g := superviseSignal{Todo: t.ID, Machine: machine, Detail: text, At: time.Now()}
 	switch state {
 	case "failed":
@@ -80,8 +87,8 @@ func (s *Service) superviseJudged(ctx context.Context, t Todo, work time.Time, c
 		s.signal(superviseSignal{Todo: t.ID, Kind: sigReview, Key: reviewKey(&v), Detail: detail})
 		return
 	}
-	if st == reviewNeedsUser {
-		return // the supervisor knows it waits for the user
+	if st == reviewNeedsUser || st == reviewParked {
+		return // the supervisor knows it waits: for the user, or parked until its time (parked.go)
 	}
 	if v := t.Supervision; t.DoneAt == nil && (v.State == reviewAccepted || v.State == reviewCancelled) {
 		// Closed by its review, open again only because its agent was sent more (taskWorking, #5892): what it did then
@@ -134,18 +141,19 @@ func (s *Service) noteOwnerWait(ctx context.Context, t Todo, work time.Time, rea
 	}
 }
 
-// supervisedWorking: one of supervised task t's agents started a turn: a review waiting is moot (the work goes on).
+// supervisedWorking: one of supervised task t's agents started a turn: a review waiting is moot (the work goes on),
+// and a parked task is parked no longer (someone sent its agent something: it is supervised as before, parked.go).
 func (s *Service) supervisedWorking(ctx context.Context, t Todo) {
 	s.autoReviewWorking(ctx, t)
-	if t.Supervision.state(t) != reviewPending && (t.Supervision == nil || t.Supervision.Waits == nil) {
+	if st := t.Supervision.state(t); st != reviewPending && st != reviewParked && (t.Supervision == nil || t.Supervision.Waits == nil) {
 		return
 	}
 	if _, _, err := s.updateSupervision(ctx, t.ID, func(v *Supervision) bool {
-		if v.State != reviewPending && v.Waits == nil {
+		if v.State != reviewPending && v.State != reviewParked && v.Waits == nil {
 			return false
 		}
 		v.Waits = nil // its agent goes on: the owner's answer reached it, or the work changed (#1277)
-		if v.State != reviewPending {
+		if v.State != reviewPending && v.State != reviewParked {
 			return true
 		}
 		v.State = ""
@@ -159,6 +167,7 @@ func (s *Service) supervisedWorking(ctx context.Context, t Todo) {
 	b := &s.supervise
 	b.mu.Lock()
 	delete(b.pending, t.ID+"|"+sigReview)
+	delete(b.pending, t.ID+"|"+sigParkedDue)
 	b.mu.Unlock()
 }
 

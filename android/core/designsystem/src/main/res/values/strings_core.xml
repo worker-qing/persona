@@ -103,6 +103,7 @@
     <string name="designsystem_core_state_unread">Unread</string>
     <string name="designsystem_core_state_awaiting_reply">Awaiting reply</string>
     <string name="designsystem_core_state_working">Working</string>
+    <string name="designsystem_core_state_background_waiting">Waiting in the background</string>
     <string name="designsystem_core_state_waiting">Waiting</string>
     <string name="designsystem_core_state_muted">Muted</string>
     <string name="designsystem_core_state_idle">Seen</string>
@@ -205,6 +206,24 @@
         <item quantity="other">Waking it in %1$d hours</item>
     </plurals>
     <string name="designsystem_core_wake_in_hours_minutes">Waking it in %1$d h %2$d min</string>
+    <string name="designsystem_core_dot_joined">%1$s · %2$s</string>
+    <string name="designsystem_core_closeout_merged_yes">merged</string>
+    <string name="designsystem_core_closeout_merged_no">not merged</string>
+    <string name="designsystem_core_closeout_merged_confirmed">merged ✓</string>
+    <string name="designsystem_core_closeout_merged_contradicted">✗ says merged, isn\'t</string>
+    <string name="designsystem_core_closeout_deployed_yes">deployed</string>
+    <string name="designsystem_core_closeout_deployed_no">not deployed</string>
+    <string name="designsystem_core_closeout_deployed_confirmed">deployed ✓</string>
+    <string name="designsystem_core_closeout_deployed_contradicted">✗ says deployed, isn\'t</string>
+    <string name="designsystem_core_closeout_blocked_on">Blocked on: %1$s</string>
+    <string name="designsystem_core_closeout_blocked">Blocked</string>
+    <string name="designsystem_core_closeout_not_done_missing">Not done: %1$s</string>
+    <string name="designsystem_core_closeout_not_done">Not done</string>
+    <string name="designsystem_core_closeout_done">Reported done</string>
+    <string name="designsystem_core_todo_orphaned">Nobody is working on this</string>
+    <string name="designsystem_core_todo_orphaned_error">closed after an error</string>
+    <string name="designsystem_core_todo_orphaned_closed">closed</string>
+    <string name="designsystem_core_todo_orphaned_offline">computer offline</string>
     <string name="designsystem_core_source_codex_live">Codex live</string>
     <string name="designsystem_core_source_codex_history">Codex history</string>
     <string name="designsystem_core_source_identity_conflict">Identity conflict</string>
@@ -327,7 +346,7 @@
     <string name="designsystem_core_headline_screen">Terminal needs you</string>
     <string name="designsystem_core_headline_needs_you">Needs you</string>
     <string name="designsystem_core_ask_question">Has a question</string>
-    <string name="designsystem_core_ask_permission">Needs your permission</string>
+    <string name="designsystem_core_ask_permission">Waiting for your approval</string>
     <string name="designsystem_core_ask_plan">Plan awaiting approval</string>
     <string name="designsystem_core_ask_screen">Terminal needs you</string>
     <string name="designsystem_core_ask_elicitation">MCP request</string>

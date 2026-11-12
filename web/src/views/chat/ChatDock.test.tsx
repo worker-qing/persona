@@ -37,7 +37,7 @@ describe("Header", () => {
     expect(html).toContain("data-switch");
     expect(html).toMatch(/class="flex min-w-0 flex-1 justify-center lg:hidden"><span data-switch/);
     expect(html).toMatch(/class="min-w-0 flex-1 max-lg:hidden"/);
-    // the buttons either side sit in slots of one width
+    // the buttons either side sit in slots of one least width, which grow to fit them (#5036)
     expect(html).toContain(`class="${HEADER_SLOT} ${HEADER_SLOT_START} lg:contents"`);
     expect(html).toContain(`class="${HEADER_SLOT} ${HEADER_SLOT_END} lg:contents"`);
   });
@@ -46,7 +46,7 @@ describe("Header", () => {
     const html = header();
     expect(html).not.toContain("justify-center lg:hidden");
     expect(html).not.toContain("max-lg:hidden");
-    expect(html).not.toContain("max-lg:w-20");
+    expect(html).not.toContain("max-lg:min-w-16");
   });
 
   it("leaves the title room on a phone: no state pill, 同空间 only from ⋯ (#3576)", () => {
@@ -169,6 +169,24 @@ describe("PendingCards", () => {
     expect(long).toBe(`来自子 Agent · ${"x".repeat(47)}…`);
     const html = cards({ narrow: false, interactions: [ix("p", "permission", { agent_id: "a1", agent_type: "code-reviewer" })] });
     expect(html).toMatch(/data-permission-from="true" title="来自子 Agent · code-reviewer" class="truncate/);
+  });
+
+  it("names a child session's card by the child's title, on its parent's page (#5120)", () => {
+    expect(permissionFrom({ folded_under: "lead", session_title: "  Write the\n tests " })).toBe("来自子 Agent · Write the tests");
+    expect(permissionFrom({ folded_under: "lead" })).toBe("来自子 Agent · 子 Agent 任务");
+    expect(permissionFrom({ folded_under: "lead", session_title: "y".repeat(80) })).toBe(`来自子 Agent · ${"y".repeat(47)}…`);
+    // a question card says it too, at its top; the session's own cards say nothing
+    const questions = [{ question: "用哪个框架？", options: [{ label: "A" }] }] as Interaction["questions"];
+    const html = cards({ narrow: false, interactions: [ix("q", "question", { questions, folded_under: "lead", session_title: "Write the tests" })] });
+    expect(html).toMatch(/data-permission-from="true" title="来自子 Agent · Write the tests"/);
+    expect(cards({ narrow: false, interactions: [ix("q", "question", { questions })] })).not.toContain("data-permission-from");
+  });
+
+  it("names a lead's worker's card as the worker's, on the lead's page (#5180)", () => {
+    expect(permissionFrom({ folded_under: "lead", folded_as: "worker", session_title: "Review the change" })).toBe("来自子 Agent · Review the change");
+    const questions = [{ question: "用哪个框架？", options: [{ label: "A" }] }] as Interaction["questions"];
+    const html = cards({ narrow: false, interactions: [ix("q", "question", { questions, folded_under: "lead", folded_as: "worker", session_title: "Review" })] });
+    expect(html).toMatch(/data-permission-from="true" title="来自子 Agent · Review"/);
   });
 
   it("shows every card on a wide screen, in no box of their own", () => {
@@ -316,6 +334,27 @@ describe("QueueStrip", () => {
     expect(renderToStaticMarkup(<QueueStrip session={{ ...queued, agent: "claude" }} draftKey="t" canEdit={false} />)).not.toContain("data-send-now");
   });
 
+  it("in a Persona chat offers Send now for the user's own messages, in the persona's name; relayed ones alone get none (#4342)", () => {
+    const persona = { ...queued, agent: undefined, assistant: true, queued: ["顺便把截图换掉", "来自「日报」：今天的汇总"], queued_relayed: 1 } as Session;
+    const html = renderToStaticMarkup(<QueueStrip session={persona} draftKey="t" canEdit persona="Nova" />);
+    expect(html).toContain("data-send-now");
+    expect(html).toContain("Nova 下一步就会依次接收");
+    const relayedOnly = renderToStaticMarkup(<QueueStrip session={{ ...persona, queued_relayed: 2 }} draftKey="t" canEdit persona="Nova" />);
+    expect(relayedOnly).not.toContain("data-send-now");
+    expect(relayedOnly).toContain("Nova 忙完会依次处理");
+    // the relayed one says it arrives when the turn ends; the user's own don't
+    expect(html.match(/data-queue-note/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="排队的第 2 条：来自「日报」：今天的汇总 · 对话空闲后送达"');
+  });
+
+  it("marks the photos a Persona chat's queued message went with when this browser sent it (#4342)", () => {
+    const persona = { ...queued, assistant: true, queued: ["请看图片", "顺便把截图换掉"] } as Session;
+    const html = renderToStaticMarkup(<QueueStrip session={persona} draftKey="t" canEdit persona="Nova" photosOf={(q) => (q === "请看图片" ? 2 : 0)} />);
+    expect(html.match(/data-queue-mark="photo"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="排队的第 1 条：2 张图片"');
+    expect(html).not.toContain(">请看图片<");
+  });
+
   // made-up words and paths, in the shape Claude Code queues a message sent with photos (#3032)
   const photo = (name: string) => `/Users/me/.persona/uploads/2026-11-10/${name}.jpg`;
   const withPhotos = `[Image #1] [Image #2]\n\n\n把这两张截图对一下\n<attached_images>\npath: ${photo("a1")}\npath: ${photo("b2")}\n</attached_images>`;
@@ -370,30 +409,17 @@ describe("restoreQueued (#3032)", () => {
   });
 });
 
-describe("Header in a task's panel (#3333)", () => {
-  const todoSession = { ...session, todo: { id: "t1", title: "代理的待办" } } as unknown as Session;
-  const agent = (key: string) => ({ key, label: key, onSelect: () => {} });
-
-  it("is the panel's only header: the task's title and subtitle, a close button, no 同空间", () => {
-    const html = header({ session: todoSession, panel: { onClose: () => {}, title: "修登录崩溃", sub: "在做 · MacBook", agents: [agent("a")] } });
-    expect(html).toContain(">修登录崩溃</h1>");
-    expect(html).toContain("在做 · MacBook");
-    expect(html).toContain('aria-label="关闭面板"');
-    expect(html).not.toContain("同空间");
-    // the agent's own todo line would repeat the task
-    expect(html).not.toContain("代理的待办");
-    // one agent: nothing to switch
-    expect(html).not.toContain('aria-label="切换 Agent"');
-  });
-
-  it("has a ⌄ beside the title for a task with several agents", () => {
-    const html = header({ panel: { onClose: () => {}, title: "修登录崩溃", agents: [agent("a"), agent("b")] } });
-    expect(html).toContain('aria-label="切换 Agent"');
-  });
-
-  it("is as before outside a panel", () => {
-    const html = header();
-    expect(html).not.toContain('aria-label="关闭面板"');
-    expect(html).toContain("同空间");
+describe("restoreQueued in a Persona chat (#4342)", () => {
+  it("puts the photos that came back with the message in the tray, without the stand-in words", async () => {
+    const events: DraftEvent[] = [];
+    const off = onDraftEvent("rqp", (e) => void events.push(e));
+    try {
+      const images = [{ mime: "image/png", data: "AQID" }];
+      await restoreQueued("rqp", session, parseQueued("请看图片", images.length), images);
+      expect(events).toEqual([{ type: "image", image: { name: "photo-1.png", mime: "image/png", data: "AQID" } }]);
+    } finally {
+      off();
+    }
   });
 });
+

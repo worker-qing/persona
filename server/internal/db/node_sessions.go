@@ -18,6 +18,7 @@ type NodeSession struct {
 	Model            string    `json:"model,omitempty"`
 	ModelFingerprint string    `json:"model_fingerprint,omitempty"`
 	ModelEffort      string    `json:"model_effort,omitempty"`
+	ConfigDir        string    `json:"config_dir,omitempty"` // the assistant's explicit Claude profile
 	Pane             string    `json:"pane,omitempty"`
 	Launcher         string    `json:"launcher"`
 	Cwd              string    `json:"cwd"`
@@ -28,6 +29,14 @@ type NodeSession struct {
 	AppEffort string `json:"app_effort,omitempty"`
 	// Opaque node-owned process observation, not a preference for later starts.
 	UltracodeProcess json.RawMessage `json:"ultracode_process,omitempty"`
+	// Guest and GuestKind: a guest conversation's tools and kind (node/assistant_guest.go), kept with the model: every
+	// process it runs in, a resume after the node started again too, has only those, and a meeting's room none of
+	// the owner's Claude Code setup.
+	Guest     []string `json:"guest,omitempty"`
+	GuestKind string   `json:"guest_kind,omitempty"`
+	// PendingSwitch: a switch to another launcher waiting for the next message (node/launcher_switch.go), opaque here
+	// like UltracodeProcess, kept with the model so a node restart neither loses it nor carries it out by itself.
+	PendingSwitch json.RawMessage `json:"pending_switch,omitempty"`
 }
 
 func (d *DB) PutNodeSession(ctx context.Context, machine, id string, s NodeSession) error {
@@ -42,7 +51,15 @@ func (d *DB) PutNodeSession(ctx context.Context, machine, id string, s NodeSessi
 	if tasks == nil {
 		tasks = []string{}
 	}
-	_, err := d.pool.Exec(ctx, `WITH saved AS (
+	guest, err := json.Marshal(s.Guest) // null for none
+	if err != nil {
+		return err
+	}
+	var pendingSwitch json.RawMessage // SQL NULL for none: the key holds a JSON null
+	if len(s.PendingSwitch) > 0 && string(s.PendingSwitch) != "null" {
+		pendingSwitch = s.PendingSwitch
+	}
+	_, err = d.pool.Exec(ctx, `WITH saved AS (
 		INSERT INTO node_sessions (machine_id, session_id, pane, launcher, cwd, started_at, tasks, updated_at, creation_id, incarnation)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $15, $16)
 		ON CONFLICT (machine_id, session_id) DO UPDATE SET pane = $3, launcher = $4, cwd = $5, started_at = $6, tasks = $7, updated_at = now(),
@@ -53,10 +70,11 @@ func (d *DB) PutNodeSession(ctx context.Context, machine, id string, s NodeSessi
 		SELECT 'node_model.' || machine_id || '.' || session_id,
 		jsonb_build_object('model', $8::text, 'model_fingerprint', $9::text, 'model_effort', $10::text,
 			'app_mode', $11::text, 'app_effort', $12::text, 'ultracode_process', $13::jsonb,
-			'started_at_unknown', $14::bool), now() FROM saved
+			'started_at_unknown', $14::bool, 'guest', $17::jsonb, 'guest_kind', $18::text, 'config_dir', $19::text,
+			'pending_switch', $20::jsonb), now() FROM saved
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
 		machine, id, s.Pane, s.Launcher, s.Cwd, s.StartedAt, tasks, s.Model, s.ModelFingerprint, s.ModelEffort, s.AppMode, s.AppEffort,
-		s.UltracodeProcess, unknownStart, s.CreationID, s.Incarnation)
+		s.UltracodeProcess, unknownStart, s.CreationID, s.Incarnation, guest, s.GuestKind, s.ConfigDir, pendingSwitch)
 	return err
 }
 
@@ -77,10 +95,14 @@ type nodeModel struct {
 	ModelEffort      string `json:"model_effort"`
 	AppMode          string `json:"app_mode"`
 	AppEffort        string `json:"app_effort"`
+	ConfigDir        string `json:"config_dir"`
 	// UltracodeProcess and StartedAtUnknown: the ultracode observation of the session's process, and a row stored
 	// without a start time (see PutNodeSession).
 	UltracodeProcess json.RawMessage `json:"ultracode_process"`
 	StartedAtUnknown bool            `json:"started_at_unknown"`
+	Guest            []string        `json:"guest"`
+	GuestKind        string          `json:"guest_kind"`
+	PendingSwitch    json.RawMessage `json:"pending_switch"`
 }
 
 // NodeSessions returns a machine's sessions from the last 60 days.
@@ -99,8 +121,13 @@ func (d *DB) NodeSessions(ctx context.Context, machine string) (map[string]NodeS
 			return nil, err
 		}
 		s.Model, s.ModelFingerprint, s.ModelEffort, s.AppMode, s.AppEffort = m.Model, m.ModelFingerprint, m.ModelEffort, m.AppMode, m.AppEffort
+		s.Guest, s.GuestKind = m.Guest, m.GuestKind
+		s.ConfigDir = m.ConfigDir
 		if len(m.UltracodeProcess) > 0 && string(m.UltracodeProcess) != "null" {
 			s.UltracodeProcess = m.UltracodeProcess
+		}
+		if len(m.PendingSwitch) > 0 && string(m.PendingSwitch) != "null" {
+			s.PendingSwitch = m.PendingSwitch
 		}
 		if m.StartedAtUnknown {
 			s.StartedAt = time.Time{}

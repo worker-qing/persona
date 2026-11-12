@@ -205,6 +205,9 @@ struct RootView: View {
         // The Theme Color on the windows too, for what UIKit draws in the window's tint (Settings' row icons, `WindowTint`).
         .onChange(of: model.look, initial: true) { WindowTint.apply() }
         #endif
+        #if DEBUG || PERF_SIGNPOST
+        .task { MainThreadWatchdog.shared.start() }
+        #endif
         #if DEBUG
         .overlay(alignment: .bottomTrailing) { PerfCountProbe() }
         // UI tests see the small window (VNC in picture in picture, #1343), which is the system's.
@@ -534,7 +537,7 @@ private struct TabPage<Page: View>: View, Equatable {
     private var badge: Text? {
         if model.isDemo { return Text("Demo") }
         let total = ExtensionSlots.shared.total
-        if total.count > 0 { return Text(total.count > 99 ? "99+" : "\(total.count)") }
+        if let text = CountBadge.text(total.count) { return Text(text) }
         return total.dot ? Text("•") : nil
     }
 }

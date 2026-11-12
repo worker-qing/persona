@@ -1,5 +1,25 @@
 # Lessons: assistant (headless Claude / Codex)
 
+- Terminal spinner frames are presentation, not native-title changes (#5254). Comparing a saved `raw_title`
+  byte for byte with a later inventory hid a successful automatic name while leaving its one-shot count spent.
+  Use the same leading-spinner/whitespace comparison for display decoration and the model-result recheck.
+  Preserve exact substantive-title differences, manual/custom protection and unknown-provenance skips; never
+  clear counters or call the model again just to repair display. Test every frame, a stopped label and a frame
+  change during the request, alongside genuine title changes and manual/unknown sources.
+
+- Automatic Agent names need title provenance, not a string heuristic alone (#4812). A user can deliberately choose
+  a tool-looking name, and an old custom-title record can fall outside a quick tail window. Treat native custom titles
+  as protected and unknown provenance as ineligible. Keep automatic names in the manager's own ledger, persist manual
+  intent before dispatching a rename, and decorate both list and single-session reads. Count cumulative output tokens,
+  never changing input-context size or transcript bytes, for periodic naming; request a bounded Responses output too.
+
+- A task trust key combines a machine and directory with an unescaped delimiter (#4421). Either field can contain
+  that delimiter, and an old ID need not obey current registration rules, so a split can assign the rule to the wrong
+  place. Keep its exact key for matching and deletion; mark an ambiguous listing and give older clients the key as a
+  path-escaped identifier, so a path-component title retains it. A failed settings read is not an empty list:
+  propagate it to the list caller while retaining the fail-closed admission and no-overwrite behavior of writers.
+  Exercise the handler after service reconstruction.
+
 - Reusing a topic to-do must retire the previous plan's execution binding (#3985). Released or dismissed Agents let
   a later plan take over the same to-do, while the old plans stay in storage. A historical `TodoID` match cannot
   impose that plan's read-only constraint on the current session. Clear old execution bindings under the takeover
@@ -71,6 +91,8 @@ Pitfalls, unusual behavior, and decisions at the time (formerly `CLAUDE.md`; ind
 
 - Reintroducing a retired model purpose must not read its dormant settings record (2026-11-06, #5921). Lark /agent uses a new override namespace and revision sequence, inheriting Agents until a new user save. Keep category-default assignment from creating an opt-in binding, include overrides in provider-in-use checks, and determine client editability from writable fields rather than `category_id != id`. Tests must seed the old record directly, then verify new conversation startup parameters before override, after save, and after reset; merely asserting the resolved binding misses startup precedence.
 
+- A second opt-in model override shows where the first was keyed by ID (#4232). Setting the AI twin apart like Lark /agent needed no new server path, but every client special-cased `id == "lark.agent"` for its status words, reset label and effort rule, so the twin's row and editor would have kept a category's wording (no "Separately configured", "Restore Default" instead of "Follow Agents") while being an override. Recognize such a row by data (`parent: "agent.new"` and writable `fields`) and keep ID checks for wording that really is one purpose's. Server tests start the twin through its own path (`startInboxAgent`), not the conversation route, and check that a save writes only its own key.
+
 - Model-settings HTTP labels must use `requestCtxLang(ctx)`, not `s.lang(ctx)` (2026-11-06, #5057). The latter reads only the hub's language, so catalog-driven launcher role labels can still ignore a client's `Accept-Language`. Test sequential requests with a different hub language, both discovered-model and fallback-model paths, and unchanged model IDs. MCP-only refusals remain original model text; they must not become exemptions for real HTTP, push or approval-card copy.
 
 - A database-read failure for session triage settings must not return `200` with defaults (2026-11-06, #4553). Toggling one switch makes the client `PUT` the entire settings group; a failed read disguised as All Off would overwrite other enabled values. Preserve the read error and return `503` with a localized reason from the settings API. Only internal automatic triage keeps a default fallback. Do not cache failures; the next retry must read the database again. Regression tests inject read errors through a fake Store and check API failure, saved values after recovery, and unaffected internal fallback and `PUT`, without stopping the shared test database.
@@ -87,7 +109,7 @@ Pitfalls, unusual behavior, and decisions at the time (formerly `CLAUDE.md`; ind
 - A tray's Waiting status describes the parent turn, not whether its background work is idle (#3591, 2026-11-10). Reuse the header's activity data for a Working spinner and phase/progress or running counts; reserve the clock for no background activity. A lightweight `DockAgent` projection must carry that data too: otherwise a same-state workflow update leaves manual-Agent rows stale. Aggregate all linked task agents, deduplicate session references and compatibility workflow markers, and keep progress digits outside truncated phase text.
 - Background tasks / Monitor are Claude child processes; idle recycling or systemd personad restart killing cgroup kills them, leaving chat waiting forever. Node reads `stream-json` `system/background_tasks_changed`, does not recycle with active tasks, persists task list continuously, tells chat what was lost after restart.
 - `background_tasks_changed` comes only when the set changes, never at start (Claude Code's schema, 2.1.311): a process that never ran a background task has reported no list, which is not the same as an empty one. A repeated `initialize` control request is answered with the current set right behind its success, empty included; the first one is not, and node sends none of its own, so asking means sending two (#3495). A fake CLI that prints an empty list at start hides this: recovery's model switch passed its tests and never ran on the real CLI.
-- A read-only task label must constrain every launch boundary (#1841). Normalize its saved permission, card edits and retries, then verify the runtime actually consumes the mode. Ordinary Codex terminal starts discarded `plan`: map it to explicit sandbox and approval CLI flags, check both alias and managed launcher arguments for conflicts, and retain the constraint across later resumes. Runtime bridges can ignore the mode or fall back to another provider; refuse paths without an enforcement guarantee before sending the prompt; test the emitted start arguments and the absence of a runtime call on refusal.
+- Resolve read-only permission from the actual launcher at planning and again at dispatch (#1841, #4864). Claude starts in `bypassPermissions` and receives the read-only constraint in its first prompt; Codex retains `plan` and explicit sandbox flags. Persist a changed permission with the resolved launcher even when machine and why are unchanged, and keep the constraint out of the saved prompt so retries do not duplicate it. Ordinary Codex terminal starts discarded `plan`: map it to explicit sandbox and approval CLI flags, check both alias and managed launcher arguments for conflicts, and retain the constraint across later resumes. Runtime bridges can ignore the mode or fall back to another provider; refuse plan starts without an enforcement guarantee before sending the prompt.
 - Scheduled assistant work needs one table only (2026-10-31, `docs/assistant/assistant.md` “Scheduled tasks”). Separate schedules / follow-ups forced repeated checks to `schedule_followup` each round; entry disappeared on start, invisible / unstopppable during hour-long approval waits. Repeating work uses every; self-reschedule recognized as same task. Only user changes task model / permission in app; assistant cannot elevate itself. Headless `bypassPermissions` only at launch.
 - Lark assistant uses gateway skill (copy formerly `server/internal/assistantskills/`, embedded personad, installed `.claude/skills` at assistant startup, upstream sync script; since 2026-11-04 in Lark plugin). Token formerly process env; since #1317 not even env, below. Node Bash PreToolUse `node/larkgate.go` applies only `assistant-hooks` / assistant-settings.json. Unparsed commands containing `ol POST/PUT/PATCH/DELETE` still require phone confirmation, otherwise bypass permits; credential-proxy gate now rejects them outright.
   Test hub uses own HOME / port / DB (`/tmp/jt`), never live personad. SSH pkill -f pattern can match own SSH command; use [/]tmp/…. [x] works only if literal absent elsewhere in same SSH command: 2026-11-01 `pkill -f "[d]rive.py x"` followed by `python3 drive.py x …`, and `pgrep -f persona_args` then process-group kill both killed SSH, exit 255. Safest anchor full path, `pgrep -f '^/tmp/jt/…/personad'`, get PID / kill, only that task per SSH.
@@ -168,6 +190,14 @@ Pitfalls, unusual behavior, and decisions at the time (formerly `CLAUDE.md`; ind
   CLAUDE.md each process started with and resumes the conversation in a fresh process on the next idle message once it
   changed (`instructionsStale`). For "the new prompt has no effect" look first at the CLAUDE.md's modification time in
   the assistant's directory on its machine and at `wrote the CLAUDE.md` in the hub's log.
+- **What is handed out only once must not be dropped by a shortcut** (#4256). `plugins.assistant` gives a machine a
+  skill's files once and counts them as sent when it answers, but the minute refresh asked for them before deciding that
+  an unchanged CLAUDE.md needed no `assistant.prepare`, and dropped them: after an upgrade that changed only a skill, the
+  assistant's machine kept the old files for over an hour. The node then reported the skill missing
+  (`plugin_skills_need`), the files were queued to go again, and the next refresh dropped them the same way. Now the
+  refresh compares the skills' names and digests too, never skips an answer that brings files, and prepares a directory
+  again on its next round when the node reported skills missing there. For "the new skill has no effect", compare the
+  modification time of `~/.persona/plugin-skills/<name>/.persona-plugin` on the assistant's machine with the upgrade's.
 
 - Inbox fixtures must wait for the first asynchronous roster count before writing directly to their items (#3459). `inboxReady` returns after scheduling `tellInboxNeedsYou`, whose goroutine holds the Inbox mutex while reading the map and status fields. Legacy fixture seeding bypassed that mutex and could crash the whole test process, even without the race detector. Use `waitNeedsYouIdle` at the fixture readiness boundary; later concurrent mutations must still use the Inbox mutex. Keep the real teller enabled and verify the complete Inbox test group under `-race`.
 - **An optional object in a tool's schema can come filled with zero values** (#3386): runtimes that fill in every field
@@ -231,7 +261,12 @@ Pitfalls, unusual behavior, and decisions at the time (formerly `CLAUDE.md`; ind
   card — but a held run gave its card back with its message, so the owner was told "N background tasks are still running"
   and then heard nothing when they finished. The sink now builds the ending line for every quiet end and, with no card,
   posts it as a card of its own (the same rule #3930's timeout relies on). The result stays quiet: the line is
-  "Done · took X", not an empty answer.
+  "Done · took X", not an empty answer. With no card left it is posted for every ending except a message the owner
+  recalled, which gets no card of its own (that one only gets the card the run still has rewritten), and the line says
+  how the wait ended (#4228); and the quiet branch must not swallow errors the way it first did (#4229): a card update
+  refused for anything but a rate limit falls back to that card of its own, and an unreachable failure is returned so
+  `finishChannelRun` keeps the run and tries again — posting under an idempotency key made from the run id (`endKey`),
+  because the first attempt may have landed before its answer was lost.
 
 - **A card nests a list by four spaces per level, not by the Markdown rule** (#4180). Lark's Markdown component documents
   one nesting level as four leading spaces (a list's sub-items are indented four spaces per level), while CommonMark — and
@@ -253,9 +288,10 @@ Pitfalls, unusual behavior, and decisions at the time (formerly `CLAUDE.md`; ind
   loads the view ten times, shows it. The settings pages are the only readers — web and iOS key the rows by session id,
   Android draws them in order — so none of them changes.
 
-- A read-only worker must be able to report while staying in plan mode (#4201). Denying `ExitPlanMode` does not remove
-  the provider's separate permission request for `mcp__persona__report_to_supervisor`. Allow that exact call once only
-  for a supervised task with a current read-only plan binding. Return `Allow` without `Always`, `Approve`, or `Mode`;
+- A read-only worker already in plan mode must be able to report without changing it (#4201). New Claude read-only tasks start in `bypassPermissions` (#4864), but Codex and legacy plan sessions still need this path. Denying `ExitPlanMode` does not remove
+  the provider's separate permission request for `report_to_supervisor`. Recognize both built-in namespaces with
+  `compat.MCPToolNames`: Paseo preserves the requested name, including the compatibility alias (#4318). Allow only
+  that tool for a supervised task with a current started read-only plan binding. Return `Allow` without `Always`, `Approve`, or `Mode`;
   the terminal hook and Paseo then send no permission or mode update. Reuse `PlanTask.TodoID`, whose old bindings are
   retired on takeover, rather than treating a historical read-only plan as authority for a new writable worker.
 
@@ -267,3 +303,42 @@ Pitfalls, unusual behavior, and decisions at the time (formerly `CLAUDE.md`; ind
   posts the card of a quiet end unless it was recalled (`end != channel.EndRecalled`), not only when it ended as done:
   gating the post on `EndDone` would have made every bad quiet ending silent instead. A branch that answers a run owes
   it the same ending fields as the normal path.
+
+- **A model asked for an option's label copies whatever the input put next to it** (#3929). `delegate_input.md` lists an option as `label：description`, and with Chinese descriptions the delegation model often answered the whole line (`表驱动：和这个包现有的测试一致`): #3923's live runs saw it in 4 of 4, 2 of 5 and 1 of 4 runs of three cases. `interactionAnswers` found no such option, so a choice the assistant had decided to answer went to the user. `optionLabel` (`assistant/tools_apps.go`) now maps an answer to a label only when it writes out exactly one option, its label then a separator (`：`, `:`, a dash, or brackets) and that option's own description, with quotes or spaces; anything else is still refused. Don't widen it to prefixes or the model's own words after a label: those are free text, and a refused answer only costs the user one question. When a prompt shows options with extra text, expect it back and test the hub's check with the exact line the prompt renders.
+
+- **A new scheduled-task `repeat` must survive the apps that don't know it** (#4399). iOS decodes an unknown `repeat`
+  as `once`, and Android and the web send it back as they got it, all without the new rule's field. A `PUT` without
+  `cron` therefore keeps a cron task's `repeat` and `cron` and saves only the rest; otherwise switching such a task
+  off on an older iPhone turned it into a one-off with no time. Keep the new rule's own field out of a body whose
+  task doesn't have one (`cron` is sent only when set), and gate the editor on the hello feature (`task_cron`).
+
+## Cancel confirmation-blocked Agents without granting approval (#4277)
+
+Keep force archive separate from ordinary busy checks. A cancellation path must close the provider or terminal,
+reject or withdraw pending cards, and keep other work protected. A cached blocked inventory after close can undo
+a newly saved archive unless the closed timestamp fences that old snapshot. Persist the archive and a future
+close timestamp in one write before closing, then replace it with the real close time. A failed close removes
+the provisional record with an independent bounded context, including when the request was cancelled.
+Paseo's CLI `archive --force` skips
+a client-side busy check; its archive request has no force field and closes the provider runtime. Check the actual
+archive receipt before removing the Agent from a bridge's local list.
+
+## Standing authorization and notification evidence (#4398)
+
+A quoted instruction in task notes is not a durable grant. Keep explicit grants in manager storage, require the user's
+own approval when adding them, and compare revisions when a setting approval can race App revocation. Recheck the
+grant after condition reads and serialize its final answer against deletion in the database. Commit the answer and
+its task decision together before sending it to a hook. A plan approval must select `default` explicitly: an empty
+mode can fall back to bypass permissions on the node. Count confirmation dispatch at `tellUser`, not interaction
+creation or app presentation; quiet tasks and supervisor routing also show cards without ringing the user.
+
+## A card the chat waits on must be in the chat (#4883)
+
+A Persona conversation's first Bash waited three and a half minutes for approval while its card was only inside the
+closed Needs you tray on the web (Android too) and on the Home overview; the owner typed "what happened?" twice and
+thought the assistant had hung. A request that blocks the turn is drawn above the composer on every client, like an
+Agent's; a tray or overview may count it and link to it, never be its only place. The same incident: a message typed
+mid-turn got no reply for minutes because the mid-turn note went in only with the optional background setting on, and
+the only line between tool calls was English to a Chinese owner. The node now always adds the note to a busy Claude
+(`midTurn`), asking for one sentence in the user's language before the next tool call, and the CLAUDE.md asks for the
+user's language in process text too.

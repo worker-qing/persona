@@ -15,7 +15,8 @@
       "role": "assistant",
       "kind": "text",
       "text": "Running the checks.",
-      "narration": true
+      "narration": true,
+      "model": "gpt-5-codex"
     },
     {
       "id": "call_00000000000000000000d3#0",
@@ -27,7 +28,8 @@
       "tool_name": "Bash",
       "tool_input": {
         "command": "make check"
-      }
+      },
+      "model": "gpt-5-codex"
     },
     {
       "id": "call_00000000000000000000d3#1",

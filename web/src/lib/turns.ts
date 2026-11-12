@@ -7,6 +7,7 @@ import { t } from "../i18n";
 import { errorSignature, isRetryText, parseAPIError, type APIErrorInfo } from "./api-errors";
 import { foldCompactions, isCompaction } from "./compaction";
 import { injectedOf } from "./injected";
+import { markModelChanges, type ModelChange } from "./model-change";
 import { sourceKey, sourceOf, userSourceSentinel } from "./message-source";
 import { attachedAgentNotices } from "./task-association";
 import type { Injected, Item, MessageSource } from "./types";
@@ -43,6 +44,11 @@ export interface UserMessage {
   continuedSource?: boolean;
   /** Original injected input blocks, before display parsing or shortening. */
   rawInput?: Item[];
+  /** A scheduled task's or follow-up's input while background rounds fold (docs/assistant/assistant.md "Background
+   *  rounds"): only its one line is shown, never the prompt (`injected.detail`, `rawInput`). */
+  promptHidden?: boolean;
+  /** Inside an opened background round: drawn as its source block, not as the raw model input supervision shows. */
+  sourceInTrace?: boolean;
 }
 
 /** A <persona-file kind="video" path="…" name="…" size="…" duration="…"/> in a message (docs/protocol/protocol.md "Sending video"). */
@@ -59,6 +65,8 @@ export interface Context {
   title?: string;
   url?: string;
   text: string;
+  /** Its other attributes as written (a forward's `msg` and metadata, a workspace's `machine`); absent when it has none. */
+  attrs?: Record<string, string>;
 }
 
 export interface Segment {
@@ -74,6 +82,8 @@ export interface Segment {
   folds: Item[];
   /** Part of a supervision round: its visibility tools stay outside the ordinary work fold. */
   supervision?: boolean;
+  /** Its reply came from another model than the previous visible reply (lib/model-change.ts): a divider before it. */
+  modelChange?: ModelChange;
 }
 
 function blockOrder(a: Item, b: Item) {
@@ -175,13 +185,27 @@ export function formatDuration(seconds: number): string {
   return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
 }
 
+// The node's <persona-view-errors> feedback after the assistant's snapshot (its last rich views failed their check):
+// for the model, never the user's words. A hub before #4315 gave it as a user item of its own, or before the message.
+const VIEW_ERRORS_RE = /<persona-view-errors\b[^>]*>[\s\S]*?<\/persona-view-errors>\s*/g;
+
+/** What a user line says without the view feedback the node put before it (#4315). */
+export function withoutViewErrors(raw: string): string {
+  return raw.includes("<persona-view-errors") ? raw.replace(VIEW_ERRORS_RE, "") : raw;
+}
+
+/** An older hub's user item holding nothing but that feedback: no message of the user's. */
+export function viewFeedbackOnly(it: Item): boolean {
+  return it.role === "user" && it.kind === "text" && !!it.text?.includes("<persona-view-errors") && !withoutViewErrors(it.text).trim();
+}
+
 export function parseUserText(raw: string): { text: string; contexts: Context[]; files: AttachedFile[]; photos: string[] } {
   const contexts: Context[] = [];
   const files: AttachedFile[] = [];
   const photos: string[] = [];
-  let text = raw.replace(CONTEXT_RE, (_, attrs: string, body: string) => {
-    const a = tagAttrs(attrs);
-    contexts.push({ kind: a.kind ?? "context", title: a.title, url: a.url, text: body.trim() });
+  let text = withoutViewErrors(raw).replace(CONTEXT_RE, (_, attrs: string, body: string) => {
+    const { kind, title, url, ...rest } = tagAttrs(attrs);
+    contexts.push({ kind: kind ?? "context", title, url, text: body.trim(), ...(Object.keys(rest).length ? { attrs: rest } : {}) });
     return "";
   });
   text = text.replace(FILE_RE, (_, attrs: string) => {
@@ -228,6 +252,7 @@ export function segments(items: Item[], results?: ReadonlyMap<string, Item>): Se
   for (const it of items) {
     if (attached.has(it.id)) continue;
     const entry = it.id.split("#")[0];
+    if (viewFeedbackOnly(it)) continue;
     if (isUserMessage(it)) {
       if (cur?.user?.injected && entry === lastUserEntry && !cur.steps.length && !cur.answer && !cur.user.rawInput!.some((i) => i.id === it.id)) {
         cur.user.rawInput!.push(it);
@@ -704,7 +729,24 @@ export function supervisionVisible(ordered: Item[], results: ReadonlyMap<string,
   return false;
 }
 
-export function buildBlocks(items: Item[]): Block[] {
+/** Message sources whose rounds fold in the main conversation while `assistant.main_background_folded` is on
+ *  (docs/assistant/assistant.md "Background rounds"): another conversation's message, a scheduled task, a follow-up. */
+const BACKGROUND_SOURCES: ReadonlySet<string> = new Set(["conversation", "followup", "patrol"]);
+
+/** The input's source when it starts a background round. A `followup` is one only as a scheduled follow-up (the hub
+ *  titles those): Persona continuing the user's own work after a usage limit reset (`limit_continue`) or waking the chat
+ *  for what it said it waits on (`wake`) carries the same source, and folding it would hide the answer to the user. */
+export function backgroundSource(it: Item): MessageSource | undefined {
+  if (!isUserInput(it) || it.kind !== "text") return undefined;
+  const injected = injectedOf(it);
+  const source = sourceOf(it, injected);
+  if (!source || !BACKGROUND_SOURCES.has(source.kind)) return undefined;
+  if (source.kind === "followup" && (injected?.state === "limit_continue" || injected?.state === "wake" || !source.title?.trim())) return undefined;
+  return source;
+}
+
+/** `background`: background rounds are separate rounds like supervision ones (a queued real message never joins them). */
+export function buildBlocks(items: Item[], background = false): Block[] {
   const blocks: Block[] = [];
   let cur: Turn | null = null;
   // the last exchange as it was before closing, and where it sits: a background task that reports back after a recap
@@ -738,12 +780,13 @@ export function buildBlocks(items: Item[]): Block[] {
   };
 
   for (const [i, it] of items.entries()) {
+    if (viewFeedbackOnly(it)) continue;
     if (isUserInput(it)) {
       const entry = it.id.split("#")[0];
       const prev: Item | undefined = cur ? cur.ordered[cur.ordered.length - 1] : undefined;
       // Supervision is a separate round even when queued. A later real message must never join its fold.
       const sameMessage = prev && isUserInput(prev) && entry === lastUserEntry;
-      const supervision = injectedOf(it)?.state === "supervise";
+      const supervision = injectedOf(it)?.state === "supervise" || (background && !!backgroundSource(it));
       const supervising = supervisionRound;
       if (cur && (sameMessage || (it.queued && !supervision && !supervising))) {
         cur.users.push(it);
@@ -773,6 +816,13 @@ export function buildBlocks(items: Item[]): Block[] {
     if (it.kind === "recap") {
       close();
       blocks.push({ kind: "row", item: it });
+      continue;
+    }
+    if (it.kind === "notice" && it.model_refusal) {
+      // #2528: an upstream refusal (and the model Claude Code moved to) is a line of its own after the exchange, never
+      // folded into the work row where it would go unseen
+      if (!cur) cur = newTurn(it.id);
+      cur.trailing.push(it);
       continue;
     }
     if (it.kind === "notice") {
@@ -806,8 +856,9 @@ export function buildBlocks(items: Item[]): Block[] {
 }
 
 export type ChatLine =
-  /** A quiet supervision round, including all its segments and notices, never the next real input. */
-  | { kind: "supervision"; id: string; lines: ChatLine[]; live: boolean }
+  /** A quiet supervision round, including all its segments and notices, never the next real input. `source`: a
+   *  background round's (another conversation, a scheduled task, a follow-up); absent for supervision. */
+  | { kind: "supervision"; id: string; lines: ChatLine[]; live: boolean; source?: MessageSource }
   /** A message (or none), one work row for what the agent did after it, the agent's last words. */
   | { kind: "segment"; id: string; seg: Segment; live: boolean; wakes?: Turn }
   /** A notice of its own line: a wake that opens new work, "Interrupted" after an exchange. */
@@ -822,6 +873,10 @@ export type ChatLine =
 export interface ChatLinesOptions {
   /** The agent is at work: the last exchange is the live one. */
   live?: boolean;
+  /** Fold background rounds (the main conversation while `assistant.main_background_folded` is on): rounds another
+   *  conversation, a scheduled task or a follow-up started fold like quiet supervision rounds, and a scheduled task's
+   *  prompt is not shown (docs/assistant/assistant.md "Background rounds"). */
+  background?: boolean;
 }
 
 function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>): ChatLine[] {
@@ -849,7 +904,8 @@ function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>):
 export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[] {
   const attached = attachedAgentNotices(items);
   const feed = items.filter((i) => !attached.has(i.id));
-  const blocks = buildBlocks(foldCompactions(feed));
+  const background = opts.background === true;
+  const blocks = buildBlocks(foldCompactions(feed), background);
   const source = feed.at(-1);
   // A wake can reopen a turn before a recap. Select the owner of the latest source item, not the last drawn block.
   const active = opts.live && source ? blocks.find((b) => b.kind === "turn" && (b.turn.ordered.some((i) => i.id === source.id) || b.turn.trailing.some((i) => i.id === source.id))) : undefined;
@@ -859,16 +915,19 @@ export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[
   const results = new Map(items.filter((i) => i.kind === "tool_result" && i.tool_use_id).map((i) => [i.tool_use_id!, i]));
   // A recap or compaction can split one round into several blocks. Supervision lasts until the next actual input,
   // not merely until one Turn closes; orphan continuation segments and live prose still belong to that round.
-  let round: { lines: ChatLine[]; ordered: Item[]; live: boolean } | undefined;
+  let round: { lines: ChatLine[]; ordered: Item[]; live: boolean; source?: MessageSource } | undefined;
   const flush = () => {
     if (!round) return;
     if (supervisionVisible(round.ordered, results, round.live)) out.push(...round.lines);
-    else out.push({ kind: "supervision", id: round.lines[0].id, lines: round.lines, live: round.live });
+    else out.push({ kind: "supervision", id: round.lines[0].id, lines: round.lines, live: round.live, ...(round.source ? { source: round.source } : {}) });
     round = undefined;
   };
   const append = (lines: ChatLine[], ordered: Item[], live: boolean) => {
     if (!round) { out.push(...lines); return; }
-    for (const line of lines) if (line.kind === "segment") line.seg.supervision = true;
+    for (const line of lines) if (line.kind === "segment") {
+      line.seg.supervision = true;
+      if (round.source && line.seg.user) line.seg.user.sourceInTrace = true;
+    }
     round.lines.push(...lines);
     round.ordered.push(...ordered);
     round.live ||= live;
@@ -876,7 +935,9 @@ export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[
   for (const b of blocks) {
     if (b.kind === "turn" && b.turn.users.length) {
       flush();
+      const source = background && b.turn.users[0] ? backgroundSource(b.turn.users[0]) : undefined;
       if (b.turn.users.some((i) => injectedOf(i)?.state === "supervise")) round = { lines: [], ordered: [], live: false };
+      else if (source) round = { lines: [], ordered: [], live: false, source };
     }
     if (b.kind === "row") {
       append([isCompaction(b.item) ? { kind: "compact", id: b.item.id, item: b.item } : { kind: "recaps", id: b.item.id, items: [b.item] }], [b.item], false);
@@ -888,7 +949,8 @@ export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[
   // Working with nothing of this run yet (the last thing is a recap): retain the supervision round's visibility.
   if (opts.live && !liveId) append([{ kind: "segment", id: "live", seg: { id: "live", steps: [], tools: 0, thoughts: 0, replies: 0, folds: [] }, live: true }], [], true);
   flush();
-  const lines = foldRecaps(foldAPIErrors(out));
+  const lines = markModelChanges(foldRecaps(foldAPIErrors(out)));
+  if (background) hideScheduledPrompts(lines);
   let previous: string | undefined;
   for (const line of lines) {
     if (line.kind === "supervision") {
@@ -900,6 +962,15 @@ export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[
     previous = line.seg.steps.length || line.seg.answer ? undefined : key;
   }
   return lines;
+}
+
+/** A scheduled task's or follow-up's input shows its one line, never its prompt, folded or not. */
+function hideScheduledPrompts(lines: ChatLine[]) {
+  for (const line of lines) {
+    if (line.kind === "supervision") hideScheduledPrompts(line.lines);
+    const user = line.kind === "segment" ? line.seg.user : undefined;
+    if (user && (user.source?.kind === "patrol" || user.source?.kind === "followup")) user.promptHidden = true;
+  }
 }
 
 /** The API error a line ends in: an answer, or a notice of its own line. `rest`: the line without it (null: nothing). */

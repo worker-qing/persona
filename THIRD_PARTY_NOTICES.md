@@ -1,5 +1,13 @@
 # Third-party notices
 
+## Password login WebAssembly client
+
+`web/public/pake/client.wasm` uses `github.com/bytemare/opaque` v0.18.0 (MIT),
+its transitive cryptographic dependencies (MIT and BSD), and the Go runtime (BSD).
+The build collects their full license texts in a generated
+`THIRD_PARTY_NOTICES.txt` under the web build's `pake` output, deployed beside the WASM client at
+`/pake/THIRD_PARTY_NOTICES.txt`. The generated notices must accompany binary distributions.
+
 ## Brand marks
 
 `apple/Persona/Resources/Assets.xcassets/Brands` and `apple/PersonaWatch/Assets.xcassets/Brands` hold other products' marks
@@ -441,32 +449,29 @@ WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEM
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## openclaw-weixin
+## Lucide
 
-`server/plugins/wechat/ilink` (the iLink client for the WeChat bot, docs/extensions/wechat.md) follows the wire behavior of Tencent's
-openclaw-weixin v2.4.6: its API types and calls, the QR authorization, the media AES-128-ECB, and its markdown filter. The Go
-code is written for Persona; nothing of the plugin's runtime is copied.
+The plan card's step marks (`web/src/views/chat/PlanCard.tsx`: circle, circle-check and the in-progress arc) and several
+web icons drawn in `web/src/ui/icons.tsx` (sparkles, corner-down-right, workflow and others its comments name) take their
+path data from Lucide, the icon set cindy uses.
 
-https://github.com/Tencent/openclaw-weixin
+https://github.com/lucide-icons/lucide
 
-Tencent is pleased to support the open source community by making openclaw-weixin available.
+ISC License
 
-Copyright (C) 2026 Tencent.  All rights reserved.
+Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022.
 
-openclaw-weixin is licensed under the MIT.
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
-rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
-persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
-Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
-WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## cindy
 
@@ -474,8 +479,28 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 cindy's model registry (`packages/model-providers/catalog/model-registry.json`): for the Claude series and the GLM,
 Kimi, DeepSeek V4, Qwen3, MiniMax, Seed and MiMo models cindy runs on Claude Code, only the id, name, context window,
 thinking levels (low, medium, high, xhigh, max) and default level, as the registry states them, reformatted to a flat
-list. The provider settings (the add-a-provider steps, the connection test and the model list it fetches) follow
-cindy's design. No code is copied.
+list. The provider settings (the add-a-provider steps, the connection test and the model list it fetches) and the web
+chat's subagent and workflow cards (`web/src/views/chat/TaskCard.tsx`, after cindy's `AgentTaskCard`: layout, states and
+wording) and the main chat's hand-off cards with the way-back strip on an Agent's page (`web/src/views/assistant/Handoff.tsx`,
+`web/src/views/chat/HandoffBack.tsx`, after cindy's `SessionHandoffCard` and its return pill: layout, states and wording)
+and a lead's Team side panel (`web/src/views/chat/TeamPanel.tsx`, after cindy's Team tab, `OrcaWorkerPanel` and its worker
+strip: layout, states, wording and when it opens) follow cindy's design. No code is copied for those.
+
+The web chat's work summary follows cindy's chat at the owner's request (2026-11-12): the timeline inside an opened
+summary (`web/src/lib/work-groups.ts`, after `createCompletedWorkGroup` in `messageWorkGroups.ts`), the thought rows
+(`web/src/views/chat/ThinkingRow.tsx`, after `ThinkingActivityRow` in `WorkGroupBlock.tsx`), the tool rows
+(`web/src/views/chat/ActionRow.tsx`, after `AgentActionRow` and `activityRowChrome.ts`) and the durations (`workDuration`,
+after `formatDuration`). Two files are ported from cindy's code with changes: `web/src/lib/thinking-text.ts` (from
+`packages/maker-shared/src/thinkingText.ts`) and `web/src/views/chat/ThinkingText.tsx` (from
+`apps/desktop/src/renderer/components/chat/ThinkingText.tsx`), with tests from cindy's.
+
+The web chat's plan (`web/src/views/chat/PlanCard.tsx`, #5156) is ported from cindy's `TodoListCard.tsx` with changes:
+the inline card that opens in place (`InlinePlanCard`), the pill above the composer with its hover / pinned flyout and
+Close Plan (`TodoListCard`), the progress ring's arithmetic and the in-progress arc's path and sizes.
+
+The changed-files card (`web/src/views/chat/TurnChanges.tsx`, #5157) and the error notice (`web/src/ui/ErrorNotice.tsx`)
+are ported from cindy's `TurnChangesCard.tsx` and `components/ui/error-notice.tsx` with changes: their layout, sizes and
+states; the counting, review targets and fold data are Persona's own.
 
 https://github.com/makecindy/cindy
 

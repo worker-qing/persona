@@ -43,6 +43,20 @@ type Fold struct {
 	LatestThinking *Item `json:"latest_thinking,omitempty"`
 	// SupervisionUser preserves an explicit user-visible action hidden inside this work range.
 	SupervisionUser bool `json:"supervision_user,omitempty"`
+	// Changes: the files the run's successful edits changed, in the order first edited (FoldChange), so a chat shows its
+	// turn's changed-files card without opening the run. Always a list, empty when the run edited nothing: a fold
+	// without it (an older node) leaves the edits unknown.
+	Changes []FoldChange `json:"changes"`
+}
+
+// FoldChange is one file a folded run's successful edits changed (docs/protocol/protocol.md "Folded work"): the lines
+// they added and removed, counted as the apps count an edit's diff and summed over the run's edits of that path.
+// Exact is false when an edit's input was clipped for good: its counts would be a guess, which the apps do not show.
+type FoldChange struct {
+	Path  string `json:"path"`
+	Add   int    `json:"add"`
+	Del   int    `json:"del"`
+	Exact bool   `json:"exact"`
 }
 
 // FoldImage is an image a tool call of a folded run looked at (docs/protocol/protocol.md "Images viewed this turn"): one its result
@@ -169,10 +183,15 @@ type Item struct {
 	Compact *Compact `json:"compact,omitempty"`
 	// ModelRefusal preserves Claude Code's refusal record on a notice.
 	ModelRefusal *ModelRefusal `json:"model_refusal,omitempty"`
+	// Model is the model that wrote this assistant item as the transcript records it: Claude Code's message.model
+	// (never its "<synthetic>" placeholder), a Codex turn's turn_context model. Absent when the transcript does not
+	// say, on other roles, and from older nodes. Clients draw a divider where the model of the replies changes.
+	Model string `json:"model,omitempty"`
 }
 
-// ModelRefusal is a Claude Code model_refusal_* record. Values are kept as recorded, including unknown categories
-// and scopes; Raw preserves the complete JSONL row for clients that need the original signal.
+// ModelRefusal is a Claude Code model_refusal_* record as clients see it: its known fields, values kept as recorded
+// (unknown subtypes, categories and scopes included), and Text, the refusal's own words (the record's string
+// content). Nothing else of the record leaves the node (#2528): the line may carry fields no one reviewed.
 type ModelRefusal struct {
 	Subtype       string `json:"subtype"`
 	OriginalModel string `json:"original_model,omitempty"`
@@ -180,8 +199,23 @@ type ModelRefusal struct {
 	Category      string `json:"category,omitempty"`
 	Scope         string `json:"scope,omitempty"`
 	Explanation   string `json:"explanation,omitempty"`
-	Raw           string `json:"raw,omitempty"`
+	Text          string `json:"text,omitempty"`
+	// Raw is the whole JSONL line, for the node's own use only (telling one record from another): never encoded, so
+	// no RPC, REST answer, push or snapshot carries it. Older builds sent it as "raw"; clients must not show that.
+	Raw string `json:"-"`
 }
+
+// ModelRestore is a pending "back to the configured model" (node session.restore_model, #2528): State
+// ModelRestoreNextStart says the session's idle headless process was closed (or none ran), so its next start asks for
+// To, the model the conversation is configured with as the node read it at At. Nothing about which model runs.
+type ModelRestore struct {
+	State string    `json:"state"`
+	To    string    `json:"to,omitempty"`
+	At    time.Time `json:"at"`
+}
+
+// ModelRestoreNextStart: the next start of the session's process uses the configured model.
+const ModelRestoreNextStart = "next_start"
 
 // MessageSource preserves an input's provenance without changing the model's role.
 // ConversationID is a stable session id, never a peer's display name (Item.From).
